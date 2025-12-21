@@ -1,0 +1,21 @@
+name: 'zensus_database'
+version: '1.0.0'
+config-version: 2
+
+profile: 'zensus_database'
+
+model-paths: ["models"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+analysis-paths: ["analyses"]
+
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  zensus_database:
+    +schema: zensus
+

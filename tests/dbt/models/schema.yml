@@ -1,0 +1,239 @@
+version: 2
+
+models:
+  - name: ref_grid_1km
+    description: "Reference table for 1km INSPIRE grid cells with polygon geometries"
+    columns:
+      - name: grid_id
+        description: "Primary key, INSPIRE grid cell identifier"
+        tests:
+          - unique
+          - not_null
+      - name: geom
+        description: "Polygon geometry in EPSG:3035"
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              expression: "ST_IsValid(geom)"
+              config:
+                severity: error
+          - dbt_utils.expression_is_true:
+              expression: "ST_SRID(geom) = 3035"
+              config:
+                severity: error
+
+  - name: ref_grid_10km
+    description: "Reference table for 10km INSPIRE grid cells with polygon geometries"
+    columns:
+      - name: grid_id
+        description: "Primary key, INSPIRE grid cell identifier"
+        tests:
+          - unique
+          - not_null
+      - name: geom
+        description: "Polygon geometry in EPSG:3035"
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              expression: "ST_IsValid(geom)"
+              config:
+                severity: error
+          - dbt_utils.expression_is_true:
+              expression: "ST_SRID(geom) = 3035"
+              config:
+                severity: error
+
+  - name: fact_zensus_1km_demography
+    description: "Demography fact table for 1km grid cells"
+    columns:
+      - name: grid_id
+        description: "Foreign key to ref_grid_1km"
+        tests:
+          - unique
+          - not_null
+          - relationships:
+              to: ref('ref_grid_1km')
+              field: grid_id
+      - name: year
+        description: "Year of the data (2022)"
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              expression: "year = 2022"
+              config:
+                severity: error
+      - name: einwohner
+        description: "Number of inhabitants"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: true
+              config:
+                severity: warn
+
+  - name: fact_zensus_10km_demography
+    description: "Demography fact table for 10km grid cells"
+    columns:
+      - name: grid_id
+        description: "Foreign key to ref_grid_10km"
+        tests:
+          - unique
+          - not_null
+          - relationships:
+              to: ref('ref_grid_10km')
+              field: grid_id
+      - name: year
+        description: "Year of the data (2022)"
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              expression: "year = 2022"
+              config:
+                severity: error
+      - name: einwohner
+        description: "Number of inhabitants"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: true
+              config:
+                severity: warn
+
+  - name: fact_zensus_1km_age_5klassen
+    description: "Age groups fact table for 1km grid cells"
+    columns:
+      - name: grid_id
+        description: "Foreign key to ref_grid_1km"
+        tests:
+          - unique
+          - not_null
+          - relationships:
+              to: ref('ref_grid_1km')
+              field: grid_id
+      - name: year
+        description: "Year of the data (2022)"
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              expression: "year = 2022"
+              config:
+                severity: error
+
+  - name: fact_zensus_10km_age_5klassen
+    description: "Age groups fact table for 10km grid cells"
+    columns:
+      - name: grid_id
+        description: "Foreign key to ref_grid_10km"
+        tests:
+          - unique
+          - not_null
+          - relationships:
+              to: ref('ref_grid_10km')
+              field: grid_id
+      - name: year
+        description: "Year of the data (2022)"
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              expression: "year = 2022"
+              config:
+                severity: error
+
+  - name: fact_zensus_1km_durchschnittsalter
+    description: "Average age fact table for 1km grid cells"
+    columns:
+      - name: grid_id
+        description: "Foreign key to ref_grid_1km"
+        tests:
+          - unique
+          - not_null
+          - relationships:
+              to: ref('ref_grid_1km')
+              field: grid_id
+      - name: durchschnittsalter
+        description: "Average age"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 120
+              inclusive: true
+              config:
+                severity: warn
+
+  - name: fact_zensus_10km_durchschnittsalter
+    description: "Average age fact table for 10km grid cells"
+    columns:
+      - name: grid_id
+        description: "Foreign key to ref_grid_10km"
+        tests:
+          - unique
+          - not_null
+          - relationships:
+              to: ref('ref_grid_10km')
+              field: grid_id
+      - name: durchschnittsalter
+        description: "Average age"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 120
+              inclusive: true
+              config:
+                severity: warn
+
+  - name: fact_zensus_1km_miete
+    description: "Average rent fact table for 1km grid cells"
+    columns:
+      - name: grid_id
+        description: "Foreign key to ref_grid_1km"
+        tests:
+          - unique
+          - not_null
+          - relationships:
+              to: ref('ref_grid_1km')
+              field: grid_id
+      - name: durchschn_miete_qm
+        description: "Average rent per square meter"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: true
+              config:
+                severity: warn
+      - name: anzahl_wohnungen
+        description: "Number of apartments"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: true
+              config:
+                severity: warn
+
+  - name: fact_zensus_10km_miete
+    description: "Average rent fact table for 10km grid cells"
+    columns:
+      - name: grid_id
+        description: "Foreign key to ref_grid_10km"
+        tests:
+          - unique
+          - not_null
+          - relationships:
+              to: ref('ref_grid_10km')
+              field: grid_id
+      - name: durchschn_miete_qm
+        description: "Average rent per square meter"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: true
+              config:
+                severity: warn
+      - name: anzahl_wohnungen
+        description: "Number of apartments"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: true
+              config:
+                severity: warn
+

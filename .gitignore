@@ -1,0 +1,58 @@
+# Environment variables
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+# Keep venv/ but ignore its contents (venv is created by setup script)
+venv/*
+!venv/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+logs/
+
+# Docker volumes (if mounted locally)
+postgres_data/
+
+# dbt
+target/
+dbt_packages/
+profiles.yml
+
+# Large data files (should be stored separately or in LFS)
+*.gpkg
+data/geo_data/*.gpkg
+data/zensus_data/**/*.csv
+
+# macOS Icon files
+Icon
+Icon?
+
+# Backups
+backups/
+*.dump
+*.sql.gz
