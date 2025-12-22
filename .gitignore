@@ -56,3 +56,6 @@ Icon?
 backups/
 *.dump
 *.sql.gz
+
+# Implementation notes
+Implementation_notes/

@@ -6,8 +6,25 @@ A PostgreSQL + PostGIS database for German Zensus 2022 data aggregated to INSPIR
 
 This project provides a complete database setup for storing and querying German census data with spatial geometries. The database uses a star schema design with:
 
-- **Reference tables**: Store authoritative polygon geometries from GeoGitter INSPIRE (EPSG:3035)
-- **Fact tables**: Store Zensus statistical data, joined to reference tables via `grid_id`
+- **Grid Reference tables**: Store authoritative polygon geometries from GeoGitter INSPIRE (EPSG:3035)
+- **Administrative Reference tables**: Store VG250 administrative boundaries (federal states, counties, municipalities)
+- **Electoral Reference tables**: Store Bundestagswahlen electoral district boundaries
+- **Fact tables**: Store Zensus statistical data and election structural data, joined to reference tables via foreign keys
+
+### Database Contents
+
+**Zensus Grid Data:**
+- 1km and 10km INSPIRE grid cells
+- 40+ demographic, housing, and socioeconomic datasets
+
+**VG250 Administrative Boundaries:**
+- 34 federal states (Bundesländer)
+- 433 counties (Kreise und kreisfreie Städte)
+- 11,103 municipalities (Gemeinden)
+
+**Bundestagswahlen Election Data:**
+- Electoral districts (299 per year: 2017, 2021, 2025)
+- Structural data (52 socioeconomic indicators per district)
 
 ## Features
 
@@ -416,6 +433,31 @@ python etl/load_zensus.py data/zensus_data/10km/Zensus2022_Bevoelkerungszahl_10k
 **Important**: 
 - **You must complete Step 6 (Generate Database Schema) first** before loading data, otherwise the tables won't exist and the load will fail with errors like `relation "zensus.fact_zensus_10km_..." does not exist`.
 - Grid geometries must be loaded first (Step 5) before loading Zensus data, as fact tables reference the grid tables.
+
+### Step 7a: Load VG250 and Election Data (Optional)
+
+The database now includes support for VG250 administrative boundaries and Bundestagswahlen election data.
+
+**To load this data:**
+
+```bash
+# Load VG250 administrative boundaries
+python etl/load_vg250.py path/to/VG250_LAN.shp --table ref_federal_state
+python etl/load_vg250.py path/to/VG250_KRS.shp --table ref_county
+python etl/load_vg250.py path/to/VG250_GEM.shp --table ref_municipality
+
+# Load Bundestagswahlen election data (example for 2025)
+python etl/load_elections.py \
+    --shapefile path/to/btw25_geometrie_wahlkreise_vg250.shp \
+    --csv path/to/btw2025_strukturdaten.csv \
+    --election-year 2025
+```
+
+**What this enables:**
+- Aggregate Zensus data by municipalities, counties, or federal states
+- Compare Zensus demographics with election structural data
+- Analyze electoral districts using fine-grained Zensus grid data
+- Create administrative hierarchy queries
 
 ### Step 8: Verify Data Load (Local)
 
