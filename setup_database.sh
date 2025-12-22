@@ -1,0 +1,450 @@
+#!/bin/bash
+# Automated setup script for German Zensus 2022 Database
+# Based on the manual setup process from README.md
+#
+# Usage: ./setup_database.sh [OPTIONS]
+#
+# Options:
+#   --test-mode         Load only 10km grid data (faster, for testing)
+#   --full              Load all data: 100m, 1km, and 10km (default: 1km + 10km)
+#   --skip-vg250        Skip loading VG250 administrative boundaries
+#   --skip-elections    Skip loading Bundestagswahlen election data
+#   --help              Show this help message
+
+set -e  # Exit on error
+
+# Color codes for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Default options
+TEST_MODE=false
+FULL_MODE=false
+SKIP_VG250=false
+SKIP_ELECTIONS=false
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --test-mode)
+            TEST_MODE=true
+            shift
+            ;;
+        --full)
+            FULL_MODE=true
+            shift
+            ;;
+        --skip-vg250)
+            SKIP_VG250=true
+            shift
+            ;;
+        --skip-elections)
+            SKIP_ELECTIONS=true
+            shift
+            ;;
+        --help)
+            echo "Automated setup script for German Zensus 2022 Database"
+            echo ""
+            echo "Usage: ./setup_database.sh [OPTIONS]"
+            echo ""
+            echo "Options:"
+            echo "  --test-mode         Load only 10km grid data (faster, for testing)"
+            echo "  --full              Load all data: 100m, 1km, and 10km"
+            echo "  --skip-vg250        Skip loading VG250 administrative boundaries"
+            echo "  --skip-elections    Skip loading Bundestagswahlen election data"
+            echo "  --help              Show this help message"
+            echo ""
+            echo "Default behavior (no flags): Load 1km + 10km Zensus data"
+            exit 0
+            ;;
+        *)
+            echo -e "${RED}Unknown option: $1${NC}"
+            echo "Use --help for usage information"
+            exit 1
+            ;;
+    esac
+done
+
+# Determine which grid sizes to load
+if [ "$TEST_MODE" = true ]; then
+    echo -e "${YELLOW}Running in TEST MODE: Only 10km data will be loaded${NC}"
+    GRID_SIZES=("10km")
+elif [ "$FULL_MODE" = true ]; then
+    echo -e "${YELLOW}Running in FULL MODE: Loading 100m, 1km, and 10km data${NC}"
+    GRID_SIZES=("10km" "1km" "100m")
+else
+    echo -e "${YELLOW}Running in DEFAULT MODE: Loading 1km and 10km data${NC}"
+    GRID_SIZES=("10km" "1km")
+fi
+
+# Function to print section headers
+print_section() {
+    echo ""
+    echo -e "${BLUE}========================================${NC}"
+    echo -e "${BLUE}$1${NC}"
+    echo -e "${BLUE}========================================${NC}"
+    echo ""
+}
+
+# Function to print success messages
+print_success() {
+    echo -e "${GREEN}✓ $1${NC}"
+}
+
+# Function to print error messages
+print_error() {
+    echo -e "${RED}✗ $1${NC}"
+}
+
+# Function to check if a command exists
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+# Start timer
+START_TIME=$(date +%s)
+
+print_section "Step 1: Checking Prerequisites"
+
+# Check Docker
+if command_exists docker; then
+    print_success "Docker is installed"
+else
+    print_error "Docker is not installed. Please install Docker first."
+    exit 1
+fi
+
+# Check Docker Compose
+if command_exists docker-compose || docker compose version >/dev/null 2>&1; then
+    print_success "Docker Compose is available"
+else
+    print_error "Docker Compose is not available. Please install it first."
+    exit 1
+fi
+
+# Check Python
+if command_exists python3; then
+    PYTHON_VERSION=$(python3 --version)
+    print_success "Python is installed: $PYTHON_VERSION"
+else
+    print_error "Python 3 is not installed. Please install Python 3.8+."
+    exit 1
+fi
+
+print_section "Step 2: Setting Up Virtual Environment"
+
+if [ ! -d "venv" ]; then
+    python3 -m venv venv
+    print_success "Virtual environment created"
+else
+    print_success "Virtual environment already exists"
+fi
+
+# Activate virtual environment
+source venv/bin/activate
+print_success "Virtual environment activated"
+
+print_section "Step 3: Installing Python Dependencies"
+
+pip install -r requirements.txt -q
+print_success "Python dependencies installed"
+
+print_section "Step 4: Starting Docker Containers"
+
+# Stop any existing containers
+docker-compose down 2>/dev/null || true
+
+# Start containers
+docker-compose up -d
+
+# Wait for PostgreSQL to be ready
+echo "Waiting for PostgreSQL to be ready..."
+sleep 10
+
+# Check if database is ready
+MAX_RETRIES=30
+RETRY_COUNT=0
+while ! docker-compose exec -T postgres pg_isready -U zensus_user -d zensus_db >/dev/null 2>&1; do
+    RETRY_COUNT=$((RETRY_COUNT + 1))
+    if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+        print_error "PostgreSQL failed to start after ${MAX_RETRIES} attempts"
+        docker-compose logs postgres
+        exit 1
+    fi
+    echo "Waiting for PostgreSQL... (${RETRY_COUNT}/${MAX_RETRIES})"
+    sleep 2
+done
+
+print_success "PostgreSQL is ready"
+
+print_section "Step 5: Loading Grid Geometries"
+
+# Check if grid data exists
+if [ ! -d "data/geo_data" ]; then
+    print_error "Grid data not found in data/geo_data/"
+    echo "Please download and place the INSPIRE grid files:"
+    echo "  - DE_Grid_ETRS89-LAEA_10km.gpkg"
+    echo "  - DE_Grid_ETRS89-LAEA_1km.gpkg"
+    echo "  - DE_Grid_ETRS89-LAEA_100m.gpkg"
+    exit 1
+fi
+
+# Load grids based on mode
+for grid_size in "${GRID_SIZES[@]}"; do
+    GRID_FILE="data/geo_data/DE_Grid_ETRS89-LAEA_${grid_size}.gpkg"
+    if [ -f "$GRID_FILE" ]; then
+        echo "Loading ${grid_size} grid..."
+        python etl/load_grids.py "$GRID_FILE" "$grid_size"
+        print_success "${grid_size} grid loaded"
+    else
+        print_error "${grid_size} grid file not found: $GRID_FILE"
+        exit 1
+    fi
+done
+
+print_section "Step 6: Generating and Applying Database Schema"
+
+# Generate and apply schema for each grid size
+for grid_size in "${GRID_SIZES[@]}"; do
+    CSV_DIR="data/zensus_data/${grid_size}"
+    if [ ! -d "$CSV_DIR" ]; then
+        print_error "Zensus data directory not found: $CSV_DIR"
+        exit 1
+    fi
+    
+    CSV_COUNT=$(find "$CSV_DIR" -name "*.csv" -type f | wc -l | tr -d ' ')
+    echo "Found ${CSV_COUNT} CSV files for ${grid_size}"
+    
+    if [ "$CSV_COUNT" -eq 0 ]; then
+        print_error "No CSV files found in $CSV_DIR"
+        exit 1
+    fi
+    
+    echo "Generating schema for ${grid_size}..."
+    # Generate SQL (redirect stderr to not pollute SQL output)
+    python scripts/generate_schema.py "$CSV_DIR" 2>/dev/null > "/tmp/schema_${grid_size}.sql"
+    
+    echo "Applying schema to database..."
+    # Apply SQL to database
+    docker-compose exec -T postgres psql -U zensus_user -d zensus_db < "/tmp/schema_${grid_size}.sql"
+    
+    # Clean up temp file
+    rm -f "/tmp/schema_${grid_size}.sql"
+    
+    print_success "Schema generated and applied for ${grid_size}"
+done
+
+print_section "Step 7: Loading Zensus Data"
+
+# Load Zensus data for each grid size
+for grid_size in "${GRID_SIZES[@]}"; do
+    CSV_DIR="data/zensus_data/${grid_size}"
+    
+    echo "Loading all ${grid_size} CSV files..."
+    # Load entire directory at once
+    python etl/load_zensus.py "$CSV_DIR"
+    
+    print_success "All ${grid_size} Zensus data loaded"
+done
+
+# Optional: Load VG250 data
+if [ "$SKIP_VG250" = false ]; then
+    print_section "Step 8: Loading VG250 Administrative Boundaries (Optional)"
+    
+    # Try multiple possible VG250 directory names
+    VG250_DIR=""
+    for dir in "data/vg250_ebenen_0101" "data/vg250_ebenen" "data/vg250"; do
+        if [ -d "$dir" ]; then
+            VG250_DIR="$dir"
+            break
+        fi
+    done
+    
+    if [ -n "$VG250_DIR" ]; then
+        echo "Found VG250 data in: $VG250_DIR"
+        
+        # Look for VG250 shapefiles
+        FED_SHP=$(find "$VG250_DIR" -name "*VG250_LAN*.shp" -type f | head -n 1)
+        COUNTY_SHP=$(find "$VG250_DIR" -name "*VG250_KRS*.shp" -type f | head -n 1)
+        MUNI_SHP=$(find "$VG250_DIR" -name "*VG250_GEM*.shp" -type f | head -n 1)
+        
+        if [ -n "$FED_SHP" ]; then
+            echo "Loading federal states..."
+            python etl/load_vg250.py "$FED_SHP" --table ref_federal_state
+            print_success "Federal states loaded"
+        else
+            echo "Federal states shapefile not found, skipping..."
+        fi
+        
+        if [ -n "$COUNTY_SHP" ]; then
+            echo "Loading counties..."
+            python etl/load_vg250.py "$COUNTY_SHP" --table ref_county
+            print_success "Counties loaded"
+        else
+            echo "Counties shapefile not found, skipping..."
+        fi
+        
+        if [ -n "$MUNI_SHP" ]; then
+            echo "Loading municipalities..."
+            python etl/load_vg250.py "$MUNI_SHP" --table ref_municipality --chunk-size 2000
+            print_success "Municipalities loaded"
+        else
+            echo "Municipalities shapefile not found, skipping..."
+        fi
+    else
+        echo "VG250 data directory not found, skipping..."
+    fi
+else
+    echo -e "${YELLOW}Skipping VG250 data (--skip-vg250 flag)${NC}"
+fi
+
+# Optional: Load Election data
+if [ "$SKIP_ELECTIONS" = false ]; then
+    print_section "Step 9: Loading Bundestagswahlen Election Data (Optional)"
+    
+    ELECTION_DIR="data/bundestagswahlen"
+    if [ -d "$ELECTION_DIR" ]; then
+        # Load BTW2017
+        if [ -d "$ELECTION_DIR/btw2017" ]; then
+            BTW2017_SHP=$(find "$ELECTION_DIR/btw2017" -name "*.shp" -type f | head -n 1)
+            BTW2017_CSV=$(find "$ELECTION_DIR/btw2017" -name "*strukturdaten*.csv" -type f | head -n 1)
+            
+            if [ -n "$BTW2017_SHP" ] && [ -n "$BTW2017_CSV" ]; then
+                echo "Loading BTW2017 data..."
+                python etl/load_elections.py --shapefile "$BTW2017_SHP" --csv "$BTW2017_CSV" --election-year 2017
+                print_success "BTW2017 loaded"
+            else
+                echo "BTW2017 data incomplete, skipping..."
+            fi
+        fi
+        
+        # Load BTW2021
+        if [ -d "$ELECTION_DIR/btw2021" ]; then
+            BTW2021_SHP=$(find "$ELECTION_DIR/btw2021" -name "*.shp" -type f | head -n 1)
+            BTW2021_CSV=$(find "$ELECTION_DIR/btw2021" -name "*strukturdaten*.csv" -type f | head -n 1)
+            
+            if [ -n "$BTW2021_SHP" ] && [ -n "$BTW2021_CSV" ]; then
+                echo "Loading BTW2021 data..."
+                python etl/load_elections.py --shapefile "$BTW2021_SHP" --csv "$BTW2021_CSV" --election-year 2021
+                print_success "BTW2021 loaded"
+            else
+                echo "BTW2021 data incomplete, skipping..."
+            fi
+        fi
+        
+        # Load BTW2025
+        if [ -d "$ELECTION_DIR/btw2025" ]; then
+            BTW2025_SHP=$(find "$ELECTION_DIR/btw2025" -name "*.shp" -type f | head -n 1)
+            BTW2025_CSV=$(find "$ELECTION_DIR/btw2025" -name "*strukturdaten*.csv" -type f | head -n 1)
+            
+            if [ -n "$BTW2025_SHP" ] && [ -n "$BTW2025_CSV" ]; then
+                echo "Loading BTW2025 data..."
+                python etl/load_elections.py --shapefile "$BTW2025_SHP" --csv "$BTW2025_CSV" --election-year 2025
+                print_success "BTW2025 loaded"
+            else
+                echo "BTW2025 data incomplete, skipping..."
+            fi
+        fi
+    else
+        echo "Election data directory not found ($ELECTION_DIR), skipping..."
+    fi
+else
+    echo -e "${YELLOW}Skipping election data (--skip-elections flag)${NC}"
+fi
+
+print_section "Step 10: Verifying Database"
+
+# Run verification queries
+echo "Running verification queries..."
+
+python -c "
+from etl.utils import get_db_engine
+from sqlalchemy import text
+
+engine = get_db_engine()
+with engine.connect() as conn:
+    # Count grids
+    for grid_size in ['10km', '1km', '100m']:
+        try:
+            count = conn.execute(text(f'SELECT COUNT(*) FROM zensus.ref_grid_{grid_size}')).scalar()
+            if count > 0:
+                print(f'  Grid {grid_size}: {count:,} cells')
+        except:
+            pass
+    
+    # Count fact tables
+    try:
+        result = conn.execute(text(\"\"\"
+            SELECT table_name 
+            FROM information_schema.tables 
+            WHERE table_schema = 'zensus' 
+            AND table_name LIKE 'fact_zensus_%'
+            ORDER BY table_name
+        \"\"\")).fetchall()
+        fact_count = len(result)
+        print(f'  Fact tables: {fact_count}')
+    except Exception as e:
+        print(f'  Error counting fact tables: {e}')
+    
+    # Count VG250 if loaded
+    if '$SKIP_VG250' == 'false':
+        try:
+            fed = conn.execute(text('SELECT COUNT(*) FROM zensus.ref_federal_state')).scalar()
+            county = conn.execute(text('SELECT COUNT(*) FROM zensus.ref_county')).scalar()
+            muni = conn.execute(text('SELECT COUNT(*) FROM zensus.ref_municipality')).scalar()
+            if fed > 0:
+                print(f'  Federal states: {fed}')
+            if county > 0:
+                print(f'  Counties: {county}')
+            if muni > 0:
+                print(f'  Municipalities: {muni:,}')
+        except:
+            pass
+    
+    # Count elections if loaded
+    if '$SKIP_ELECTIONS' == 'false':
+        try:
+            districts = conn.execute(text('SELECT COUNT(*) FROM zensus.ref_electoral_district')).scalar()
+            structural = conn.execute(text('SELECT COUNT(*) FROM zensus.fact_election_structural_data')).scalar()
+            if districts > 0:
+                print(f'  Electoral districts: {districts}')
+            if structural > 0:
+                print(f'  Election structural data: {structural}')
+        except:
+            pass
+"
+
+print_success "Database verification complete"
+
+# Calculate elapsed time
+END_TIME=$(date +%s)
+ELAPSED=$((END_TIME - START_TIME))
+MINUTES=$((ELAPSED / 60))
+SECONDS=$((ELAPSED % 60))
+
+print_section "Setup Complete!"
+
+echo -e "${GREEN}Database successfully set up and populated!${NC}"
+echo ""
+echo "Time elapsed: ${MINUTES}m ${SECONDS}s"
+echo ""
+echo "Connection details:"
+echo "  Host: localhost"
+echo "  Port: 5432"
+echo "  Database: zensus_db"
+echo "  User: zensus_user"
+echo "  Password: zensus123"
+echo ""
+echo "Connect with:"
+echo "  psql -h localhost -p 5432 -U zensus_user -d zensus_db"
+echo ""
+echo "Or use pgAdmin, DBeaver, or QGIS to connect and query the data."
+echo ""
+
+if [ "$TEST_MODE" = true ]; then
+    echo -e "${YELLOW}Note: Running in TEST MODE with only 10km data.${NC}"
+    echo "To load all data, run: ./setup_database.sh --full"
+fi

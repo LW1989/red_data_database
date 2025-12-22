@@ -225,11 +225,10 @@ def load_vg250_shapefile(shapefile_path: Path, table_name: str, engine, chunk_si
                 logger.info(f"Inserted chunk {i//chunk_size + 1}: {inserted_rows}/{total_rows} rows")
         
         except Exception as e:
-            error_count += len(chunk)
             logger.error(f"Error inserting chunk {i//chunk_size + 1}: {e}")
             logger.info(f"Falling back to individual row inserts for chunk {i//chunk_size + 1}")
             
-            # Try individual row inserts
+            # Try individual row inserts (only count actual failures, not the entire batch)
             for record in records:
                 try:
                     with engine.connect() as conn:

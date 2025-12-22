@@ -55,6 +55,57 @@ This project can be run locally for development or deployed on a server using Do
 - **Python 3.8+** with `pip`
 - **Git** (to clone the repository)
 
+### Quick Start: Automated Setup (Recommended)
+
+For a fully automated setup, use the provided setup script:
+
+```bash
+# Clone the repository
+git clone <repository-url>
+cd red_data_database
+
+# Create .env file from template
+cp .env.example .env
+nano .env  # Edit and set passwords
+
+# Run automated setup (loads 1km + 10km data by default)
+./setup_database.sh
+
+# OR: Test mode with only 10km data (faster)
+./setup_database.sh --test-mode
+
+# OR: Full setup with all data including 100m
+./setup_database.sh --full
+```
+
+**Available options:**
+- `--test-mode`: Load only 10km grid data (fastest, for testing)
+- `--full`: Load all data including 100m, 1km, and 10km (slowest, complete dataset)
+- `--skip-vg250`: Skip loading VG250 administrative boundaries
+- `--skip-elections`: Skip loading Bundestagswahlen election data
+- No flags: Load 1km + 10km data (recommended default)
+
+The script will automatically:
+1. Check prerequisites (Docker, Python)
+2. Set up virtual environment and install dependencies
+3. Start PostgreSQL container
+4. Load grid geometries
+5. Generate database schema
+6. Load all Zensus datasets
+7. Optionally load VG250 and election data
+8. Verify the installation
+
+**Time estimates:**
+- `--test-mode` (10km only): ~5-10 minutes
+- Default (1km + 10km): ~30-60 minutes
+- `--full` (100m + 1km + 10km): Several hours
+
+---
+
+### Manual Setup (Step-by-Step)
+
+If you prefer to run each step manually, follow these instructions:
+
 ### Step 1: Clone and Setup
 
 ```bash
