@@ -26,6 +26,10 @@ This project provides a complete database setup for storing and querying German 
 - Electoral districts (299 per year: 2017, 2021, 2025)
 - Structural data (52 socioeconomic indicators per district)
 
+**LWU Berlin Properties:**
+- 5,468 property parcels owned by Berlin state housing companies
+- Full polygon geometries for spatial analysis
+
 ## Features
 
 - Docker-based local development setup
@@ -509,6 +513,16 @@ python etl/load_elections.py \
 - Compare Zensus demographics with election structural data
 - Analyze electoral districts using fine-grained Zensus grid data
 - Create administrative hierarchy queries
+
+```bash
+# Load LWU Berlin properties (state-owned housing company properties)
+python etl/load_lwu_properties.py data/luw_berlin/lwu_berlin_small.geojson
+```
+
+**What this enables:**
+- Identify state-owned properties in census grid cells
+- Analyze demographics around state housing locations
+- Compare with administrative boundaries and electoral districts
 
 ### Step 8: Verify Data Load (Local)
 

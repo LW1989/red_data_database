@@ -355,7 +355,19 @@ else
     echo -e "${YELLOW}Skipping election data (--skip-elections flag)${NC}"
 fi
 
-print_section "Step 10: Verifying Database"
+# Load LWU properties (always if data exists)
+print_section "Step 10: Loading LWU Berlin Properties (Optional)"
+
+LWU_FILE="data/luw_berlin/lwu_berlin_small.geojson"
+if [ -f "$LWU_FILE" ]; then
+    echo "Loading LWU Berlin properties..."
+    python etl/load_lwu_properties.py "$LWU_FILE"
+    print_success "LWU properties loaded"
+else
+    echo "LWU data file not found ($LWU_FILE), skipping..."
+fi
+
+print_section "Step 11: Verifying Database"
 
 # Run verification queries
 echo "Running verification queries..."
@@ -415,6 +427,14 @@ with engine.connect() as conn:
                 print(f'  Election structural data: {structural}')
         except:
             pass
+    
+    # Count LWU properties if loaded
+    try:
+        lwu = conn.execute(text('SELECT COUNT(*) FROM zensus.ref_lwu_properties')).scalar()
+        if lwu > 0:
+            print(f'  LWU properties: {lwu:,}')
+    except:
+        pass
 "
 
 print_success "Database verification complete"
