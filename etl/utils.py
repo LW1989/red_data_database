@@ -47,6 +47,11 @@ def get_db_engine() -> Engine:
     db_user = os.getenv('DB_USER', 'zensus_user')
     db_password = os.getenv('DB_PASSWORD', 'changeme')
     
+    # Force IPv4 to avoid IPv6 connection issues
+    # Use 127.0.0.1 instead of localhost if host is localhost
+    if db_host == 'localhost':
+        db_host = '127.0.0.1'
+    
     connection_string = (
         f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
     )
@@ -234,10 +239,12 @@ def validate_grid_id_exists(engine: Engine, grid_id: str, grid_size: str = '1km'
     Returns:
         True if grid_id exists, False otherwise
     """
+    from sqlalchemy import text
+    
     table_name = f"ref_grid_{grid_size}"
-    query = f"SELECT 1 FROM zensus.{table_name} WHERE grid_id = %s LIMIT 1"
+    query = text(f"SELECT 1 FROM zensus.{table_name} WHERE grid_id = :grid_id LIMIT 1")
     
     with engine.connect() as conn:
-        result = conn.execute(query, (grid_id,))
+        result = conn.execute(query, {"grid_id": grid_id})
         return result.fetchone() is not None
 

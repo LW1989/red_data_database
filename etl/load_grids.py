@@ -5,6 +5,11 @@ Load GeoGitter INSPIRE GPKG files into PostgreSQL reference grid tables.
 import sys
 import argparse
 from pathlib import Path
+
+# Add project root to Python path so we can import etl module
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
 import geopandas as gpd
 from sqlalchemy import text
 from etl.utils import get_db_engine, logger
@@ -52,6 +57,10 @@ def load_grid_from_gpkg(gpkg_path: Path, grid_size: str, engine, chunk_size: int
         logger.info(f"Reprojecting from {gdf.crs} to EPSG:3035")
         gdf = gdf.to_crs(epsg=3035)
     
+    # Ensure CRS is set after any transformations
+    if gdf.crs is None or gdf.crs.to_epsg() != 3035:
+        gdf.set_crs(epsg=3035, inplace=True)
+    
     # Construct grid_id from GPKG coordinates to match CSV format
     # CSV format: CRS3035RES{size}mN{y_mp}E{x_mp}
     # GPKG has x_mp and y_mp columns with cell center coordinates
@@ -76,10 +85,10 @@ def load_grid_from_gpkg(gpkg_path: Path, grid_size: str, engine, chunk_size: int
     logger.info(f"Constructed grid_id from x_mp/y_mp coordinates (format: CRS3035RES{size_str}N{{y}}E{{x}})")
     logger.info(f"Sample grid_id: {gdf['grid_id'].iloc[0] if len(gdf) > 0 else 'N/A'}")
     
-    # Select only required columns
+    # Select only required columns (keep as GeoDataFrame)
     gdf = gdf[['grid_id', 'geometry']]
     
-    # Validate geometries
+    # Validate geometries before renaming
     invalid_count = (~gdf.geometry.is_valid).sum()
     if invalid_count > 0:
         logger.warning(f"Found {invalid_count} invalid geometries, attempting to fix")
@@ -91,6 +100,12 @@ def load_grid_from_gpkg(gpkg_path: Path, grid_size: str, engine, chunk_size: int
         gdf['geometry'] = gdf.geometry.apply(
             lambda geom: geom.geoms[0] if hasattr(geom, 'geoms') else geom
         )
+    
+    # Rename geometry column to match database column name ('geom')
+    # Store CRS first, then rename and set geometry
+    crs = gdf.crs
+    gdf = gdf.rename(columns={'geometry': 'geom'})
+    gdf = gdf.set_geometry('geom', crs=crs)  # Preserve CRS when setting geometry
     
     table_name = f"ref_grid_{grid_size}"
     
@@ -104,40 +119,41 @@ def load_grid_from_gpkg(gpkg_path: Path, grid_size: str, engine, chunk_size: int
     for i in range(0, total_rows, chunk_size):
         chunk = gdf.iloc[i:i+chunk_size].copy()
         
+        # Use direct SQL inserts (more reliable than to_postgis for custom column names)
+        # Prepare batch insert for better performance
+        records = []
+        for idx, row in chunk.iterrows():
+            records.append({
+                'grid_id': row['grid_id'],
+                'geom_wkb': row['geom'].wkb  # Convert geometry to WKB (Well-Known Binary)
+            })
+        
         try:
-            # Use GeoPandas to_postgis for geometry handling
-            chunk.to_postgis(
-                name=table_name,
-                con=engine,
-                schema='zensus',
-                if_exists='append',
-                index=False
-            )
-            inserted_rows += len(chunk)
-            logger.info(f"Inserted chunk {i//chunk_size + 1}: {inserted_rows}/{total_rows} rows")
+            # Batch insert using executemany for better performance
+            with engine.connect() as conn:
+                insert_stmt = text(f"""
+                    INSERT INTO zensus.{table_name} (grid_id, geom)
+                    VALUES (:grid_id, ST_SetSRID(ST_GeomFromWKB(:geom_wkb), 3035))
+                    ON CONFLICT (grid_id) DO NOTHING
+                """)
+                conn.execute(insert_stmt, records)
+                conn.commit()
+                inserted_rows += len(chunk)
+                logger.info(f"Inserted chunk {i//chunk_size + 1}: {inserted_rows}/{total_rows} rows")
         except Exception as e:
             error_count += len(chunk)
             logger.error(f"Error inserting chunk {i//chunk_size + 1}: {e}")
-            # Try individual row inserts for this chunk
-            for idx, row in chunk.iterrows():
+            logger.info(f"Falling back to individual row inserts for chunk {i//chunk_size + 1}")
+            # Try individual row inserts for this chunk (more reliable)
+            for record in records:
                 try:
                     with engine.connect() as conn:
-                        conn.execute(
-                            text(f"""
-                                INSERT INTO zensus.{table_name} (grid_id, geom)
-                                VALUES (:grid_id, ST_GeomFromWKB(:geom, 3035))
-                                ON CONFLICT (grid_id) DO NOTHING
-                            """),
-                            {
-                                'grid_id': row['grid_id'],
-                                'geom': row['geometry'].wkb
-                            }
-                        )
+                        conn.execute(insert_stmt, record)
                         conn.commit()
                         inserted_rows += 1
                 except Exception as row_error:
                     error_count += 1
-                    logger.warning(f"Failed to insert grid_id {row['grid_id']}: {row_error}")
+                    logger.warning(f"Failed to insert grid_id {record['grid_id']}: {row_error}")
     
     logger.info(f"Grid loading complete: {inserted_rows} rows inserted, {error_count} errors")
     
@@ -174,6 +190,18 @@ def main():
     
     if not args.gpkg_path.exists():
         logger.error(f"GPKG file not found: {args.gpkg_path}")
+        # Check if it's a common typo (hyphen instead of underscore)
+        if 'DE_Grid-ETRS89' in str(args.gpkg_path):
+            suggested_path = str(args.gpkg_path).replace('DE_Grid-ETRS89', 'DE_Grid_ETRS89')
+            logger.error(f"Did you mean: {suggested_path}? (Note: underscore after 'Grid', not hyphen)")
+        # List available files in the directory
+        gpkg_dir = args.gpkg_path.parent
+        if gpkg_dir.exists():
+            available_files = list(gpkg_dir.glob('*.gpkg'))
+            if available_files:
+                logger.error(f"Available GPKG files in {gpkg_dir}:")
+                for f in available_files:
+                    logger.error(f"  - {f.name}")
         sys.exit(1)
     
     engine = get_db_engine()

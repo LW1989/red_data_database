@@ -8,6 +8,11 @@ import sys
 import argparse
 import re
 from pathlib import Path
+
+# Add project root to Python path so we can import etl module
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
 import pandas as pd
 from sqlalchemy import text
 from etl.utils import (
@@ -39,46 +44,75 @@ def sanitize_column_name(col_name: str) -> str:
     col = re.sub(r'_+', '_', col)
     # Remove leading/trailing underscores
     col = col.strip('_')
+    # PostgreSQL identifiers cannot start with a number
+    # If column name starts with a digit, prefix with 'col_'
+    if col and col[0].isdigit():
+        col = 'col_' + col
     return col
 
 
 def detect_table_mapping(csv_path: Path) -> tuple:
     """
     Detect table name and grid size based on CSV file path.
-    Dynamically generates table name from folder structure.
+    Supports both old structure (dataset folders) and new structure (grid-size folders).
     
     Args:
         csv_path: Path to CSV file
         
     Returns:
-        Tuple of (table_name, grid_size, folder_name) or (None, None, None) if not found
+        Tuple of (table_name, grid_size, dataset_name) or (None, None, None) if not found
     """
+    import re
     path_str = str(csv_path)
+    filename = csv_path.name
     
-    # Determine grid size
-    if '100m-Gitter' in path_str or '100m_Gitter' in path_str:
+    # Determine grid size from filename or path
+    if '100m-Gitter' in path_str or '100m_Gitter' in path_str or '100m-Gitter' in filename:
         grid_size = '100m'
-    elif '1km-Gitter' in path_str or '1km_Gitter' in path_str:
+    elif '1km-Gitter' in path_str or '1km_Gitter' in path_str or '1km-Gitter' in filename:
         grid_size = '1km'
-    elif '10km-Gitter' in path_str or '10km_Gitter' in path_str:
+    elif '10km-Gitter' in path_str or '10km_Gitter' in path_str or '10km-Gitter' in filename:
         grid_size = '10km'
     else:
         logger.warning(f"Could not determine grid size from path: {csv_path}")
         return None, None, None
     
-    # Extract folder name from path
-    # Path structure: data/zensus_data/{folder_name}/filename.csv
+    # Extract dataset name from filename or folder structure
+    # New structure: data/zensus_data/{grid_size}/Zensus2022_DatasetName_{grid_size}-Gitter.csv
+    # Old structure: data/zensus_data/{dataset_folder}/Zensus2022_DatasetName_{grid_size}-Gitter.csv
+    
     parts = csv_path.parts
     try:
         zensus_idx = parts.index('zensus_data')
+        
+        # Check if new structure (grid-size folders: 10km, 1km, 100m)
         if zensus_idx + 1 < len(parts):
-            folder_name = parts[zensus_idx + 1]
-            table_name = f"fact_zensus_{grid_size}_{sanitize_table_name(folder_name)}"
-            return table_name, grid_size, folder_name
+            parent_folder = parts[zensus_idx + 1]
+            if parent_folder in ['10km', '1km', '100m']:
+                # New structure: extract dataset name from filename
+                # Example: Zensus2022_Bevoelkerungszahl_10km-Gitter.csv -> Bevoelkerungszahl
+                dataset_name = filename.replace('Zensus2022_', '')
+                # Remove grid size suffix
+                dataset_name = re.sub(r'_[0-9]+km-Gitter\.csv$', '', dataset_name)
+                dataset_name = re.sub(r'_100m-Gitter\.csv$', '', dataset_name)
+                dataset_name = dataset_name.strip('_')
+            else:
+                # Old structure: use folder name as dataset name
+                dataset_name = parent_folder
+        else:
+            # Fallback: try to extract from filename
+            dataset_name = filename.replace('Zensus2022_', '')
+            dataset_name = re.sub(r'_[0-9]+km-Gitter\.csv$', '', dataset_name)
+            dataset_name = re.sub(r'_100m-Gitter\.csv$', '', dataset_name)
+            dataset_name = dataset_name.strip('_')
+        
+        if dataset_name:
+            table_name = f"fact_zensus_{grid_size}_{sanitize_table_name(dataset_name)}"
+            return table_name, grid_size, dataset_name
     except (ValueError, IndexError):
         pass
     
-    logger.warning(f"Could not extract folder name from path: {csv_path}")
+    logger.warning(f"Could not extract dataset name from path: {csv_path}")
     return None, None, None
 
 
@@ -133,28 +167,59 @@ def load_zensus_csv(csv_path: Path, engine, validate_grid_ids: bool = True, chun
         logger.error(f"Grid ID column not found in CSV. Expected: GITTER_ID_{grid_size} or Gitter_ID_{grid_size}")
         return
     
+    # Reconstruct grid_id from x_mp/y_mp to match database format
+    # CSV files have grid_ids with corner coordinates, but database uses center coordinates
+    # We need to reconstruct grid_id from x_mp/y_mp (center coordinates) to match the database
+    x_mp_col = f'x_mp_{grid_size}'
+    y_mp_col = f'y_mp_{grid_size}'
+    
+    if x_mp_col in df.columns and y_mp_col in df.columns:
+        # Size mapping for grid_id format
+        size_map = {'100m': '100m', '1km': '1000m', '10km': '10000m'}
+        size_str = size_map.get(grid_size, f'{grid_size}m')
+        
+        # Reconstruct grid_id from center coordinates (x_mp, y_mp) to match database
+        df['grid_id'] = df.apply(
+            lambda row: f"CRS3035RES{size_str}N{int(row[y_mp_col])}E{int(row[x_mp_col])}",
+            axis=1
+        )
+        logger.info(f"Reconstructed grid_id from {x_mp_col}/{y_mp_col} (center coordinates) to match database format")
+    else:
+        # Fallback: use the grid_id column from CSV (may not match database)
+        df['grid_id'] = df[grid_id_col]
+        logger.warning(f"Could not find {x_mp_col} or {y_mp_col} columns. Using grid_id from CSV (may not match database format)")
+    
     # Build column mapping dynamically
-    # Standard columns to keep as-is
+    # Standard columns to keep as-is (but sanitize to lowercase for PostgreSQL)
     standard_cols = {
-        grid_id_col: 'grid_id',
+        'grid_id': 'grid_id',
     }
-    # Add coordinate columns if they exist
-    for coord_col in [f'x_mp_{grid_size}', f'y_mp_{grid_size}']:
+    # Add coordinate columns if they exist (sanitize to lowercase to match schema)
+    for coord_col in [x_mp_col, y_mp_col]:
         if coord_col in df.columns:
-            standard_cols[coord_col] = coord_col
+            standard_cols[coord_col] = sanitize_column_name(coord_col)
     
     # Map all other columns (sanitize names)
+    # Exclude the original grid_id column (GITTER_ID_10km) since we use the reconstructed grid_id
     column_mapping = standard_cols.copy()
     for col in df.columns:
-        if col not in standard_cols and col != 'werterlaeuternde_Zeichen':
+        if col not in standard_cols and col != 'werterlaeuternde_Zeichen' and col != grid_id_col:
             column_mapping[col] = sanitize_column_name(col)
     
     # Rename columns
     df_renamed = df.rename(columns=column_mapping)
     
-    # Remove werterlaeuternde_Zeichen if present (metadata column)
-    if 'werterlaeuternde_zeichen' in df_renamed.columns:
-        df_renamed = df_renamed.drop(columns=['werterlaeuternde_zeichen'])
+    # Remove the original grid_id column (GITTER_ID_10km) since we use the reconstructed grid_id
+    # Also remove werterlaeuternde_Zeichen if present (metadata column) - check both original and renamed versions
+    cols_to_drop = []
+    if grid_id_col in df_renamed.columns:
+        cols_to_drop.append(grid_id_col)
+    # Check for werterlaeuternde_Zeichen in both original form and sanitized form
+    for col in df_renamed.columns:
+        if col.lower() == 'werterlaeuternde_zeichen' or col == 'werterlaeuternde_Zeichen':
+            cols_to_drop.append(col)
+    if cols_to_drop:
+        df_renamed = df_renamed.drop(columns=cols_to_drop)
     
     # Add year column
     df_renamed['year'] = 2022
@@ -263,22 +328,38 @@ def load_zensus_csv(csv_path: Path, engine, validate_grid_ids: bool = True, chun
     
     logger.info(f"Zensus loading complete: {inserted_rows} rows inserted, {error_count} errors")
     
-    # Verify insertion
-    with engine.connect() as conn:
-        result = conn.execute(text(f"SELECT COUNT(*) FROM zensus.{table_name}"))
-        count = result.scalar()
-        logger.info(f"Total rows in {table_name}: {count}")
+    # Verify insertion (only if rows were inserted)
+    if inserted_rows > 0:
+        try:
+            with engine.connect() as conn:
+                result = conn.execute(text(f"SELECT COUNT(*) FROM zensus.{table_name}"))
+                count = result.scalar()
+                logger.info(f"Total rows in {table_name}: {count}")
+        except Exception as e:
+            logger.warning(f"Could not verify row count in {table_name} (table may not exist yet): {e}")
 
 
 def main():
     """Main entry point for the script."""
     parser = argparse.ArgumentParser(
-        description='Load Zensus CSV files into PostgreSQL fact tables'
+        description='Load Zensus CSV files into PostgreSQL fact tables',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Load a single CSV file:
+  python etl/load_zensus.py data/zensus_data/10km/Zensus2022_Bevoelkerungszahl_10km-Gitter.csv
+  
+  # Load all CSV files from a folder (e.g., all 10km files):
+  python etl/load_zensus.py data/zensus_data/10km/
+  
+  # Load all CSV files recursively from a directory:
+  python etl/load_zensus.py data/zensus_data/10km/ --recursive
+        """
     )
     parser.add_argument(
         'csv_path',
         type=Path,
-        help='Path to the Zensus CSV file'
+        help='Path to a Zensus CSV file or directory containing CSV files'
     )
     parser.add_argument(
         '--no-validate',
@@ -291,25 +372,70 @@ def main():
         default=10000,
         help='Number of rows to insert per chunk (default: 10000)'
     )
+    parser.add_argument(
+        '--recursive',
+        action='store_true',
+        help='If csv_path is a directory, recursively search for CSV files'
+    )
     
     args = parser.parse_args()
     
     if not args.csv_path.exists():
-        logger.error(f"CSV file not found: {args.csv_path}")
+        logger.error(f"Path not found: {args.csv_path}")
         sys.exit(1)
     
     engine = get_db_engine()
     
-    try:
-        load_zensus_csv(
-            args.csv_path, 
-            engine, 
-            validate_grid_ids=not args.no_validate,
-            chunk_size=args.chunk_size
-        )
-        logger.info("Zensus loading completed successfully")
-    except Exception as e:
-        logger.error(f"Zensus loading failed: {e}", exc_info=True)
+    # Determine if path is a file or directory
+    csv_files = []
+    if args.csv_path.is_file():
+        if args.csv_path.suffix.lower() == '.csv':
+            csv_files = [args.csv_path]
+        else:
+            logger.error(f"File is not a CSV file: {args.csv_path}")
+            sys.exit(1)
+    elif args.csv_path.is_dir():
+        # Find all CSV files in directory
+        if args.recursive:
+            csv_files = list(args.csv_path.rglob('*.csv'))
+        else:
+            csv_files = list(args.csv_path.glob('*.csv'))
+        
+        if not csv_files:
+            logger.error(f"No CSV files found in: {args.csv_path}")
+            sys.exit(1)
+        
+        logger.info(f"Found {len(csv_files)} CSV file(s) to load")
+    else:
+        logger.error(f"Path is neither a file nor directory: {args.csv_path}")
+        sys.exit(1)
+    
+    # Load each CSV file
+    success_count = 0
+    error_count = 0
+    
+    for csv_file in csv_files:
+        try:
+            logger.info(f"\n{'='*60}")
+            logger.info(f"Loading: {csv_file.name}")
+            logger.info(f"{'='*60}")
+            load_zensus_csv(
+                csv_file, 
+                engine, 
+                validate_grid_ids=not args.no_validate,
+                chunk_size=args.chunk_size
+            )
+            success_count += 1
+        except Exception as e:
+            error_count += 1
+            logger.error(f"Failed to load {csv_file}: {e}", exc_info=True)
+    
+    # Summary
+    logger.info(f"\n{'='*60}")
+    logger.info(f"Loading Summary: {success_count} succeeded, {error_count} failed")
+    logger.info(f"{'='*60}")
+    
+    if error_count > 0:
         sys.exit(1)
 
 

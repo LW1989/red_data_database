@@ -45,8 +45,8 @@ profiles.yml
 
 # Large data files (should be stored separately or in LFS)
 *.gpkg
-data/geo_data/*.gpkg
-data/zensus_data/**/*.csv
+# Ignore entire data folder and all its contents
+data/
 
 # macOS Icon files
 Icon
