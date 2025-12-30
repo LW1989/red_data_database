@@ -225,11 +225,12 @@ def generate_table_sql(folder_name, grid_size, columns, column_data, dtype_dict=
         col_defs.append('x_mp_10km NUMERIC')
         col_defs.append('y_mp_10km NUMERIC')
     
-    # Build SQL
+    # Build SQL (join column definitions first to avoid backslash in f-string)
+    columns_str = ',\n    '.join(col_defs)
     sql = f"""
 -- {folder_name} fact table for {grid_size} grid
 CREATE TABLE IF NOT EXISTS zensus.{table_name} (
-    {',\n    '.join(col_defs)},
+    {columns_str},
     CONSTRAINT chk_year_2022 CHECK (year = 2022),
     CONSTRAINT fk_grid_{grid_size} FOREIGN KEY (grid_id) REFERENCES zensus.ref_grid_{grid_size}(grid_id)
 );
