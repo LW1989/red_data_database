@@ -297,7 +297,71 @@ for grid_size in "${GRID_SIZES[@]}"; do
     GRID_FILE="data/geo_data/DE_Grid_ETRS89-LAEA_${grid_size}.gpkg"
     if [ -f "$GRID_FILE" ]; then
         echo "Loading ${grid_size} grid..."
-        python etl/load_grids.py "$GRID_FILE" "$grid_size"
+        
+        # Use ogr2ogr for 100m grid (memory-efficient), Python for others
+        if [ "$grid_size" = "100m" ]; then
+            echo "Using ogr2ogr for large 100m grid (memory-efficient method)..."
+            
+            # Check if ogr2ogr is available
+            if ! command -v ogr2ogr &> /dev/null; then
+                echo "Installing GDAL tools for ogr2ogr..."
+                if [ "$IN_CONTAINER" = true ]; then
+                    apt-get update -qq && apt-get install -y -qq gdal-bin > /dev/null 2>&1
+                else
+                    print_error "ogr2ogr not found. Please install GDAL tools:"
+                    echo "  macOS: brew install gdal"
+                    echo "  Ubuntu/Debian: sudo apt-get install gdal-bin"
+                    exit 1
+                fi
+            fi
+            
+            # Load with ogr2ogr (streams data without loading all into memory)
+            ogr2ogr \
+                -f PostgreSQL \
+                "PG:host=${DB_HOST} port=${DB_PORT} dbname=${DB_NAME} user=${DB_USER} password=${DB_PASSWORD}" \
+                "$GRID_FILE" \
+                -nln zensus.ref_grid_100m_temp \
+                -lco GEOMETRY_NAME=geom \
+                -lco SPATIAL_INDEX=NONE \
+                -progress \
+                --config PG_USE_COPY YES
+            
+            # Transform to match expected schema (construct grid_id from coordinates)
+            echo "Transforming data to match expected schema..."
+            $PSQL_CMD <<EOF
+-- Create final table with proper schema
+CREATE TABLE IF NOT EXISTS zensus.ref_grid_100m (
+    grid_id TEXT PRIMARY KEY,
+    geom GEOMETRY(POLYGON, 3035) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_100m_valid CHECK (ST_IsValid(geom)),
+    CONSTRAINT chk_100m_srid CHECK (ST_SRID(geom) = 3035)
+);
+
+-- Insert with constructed grid_id from ogr2ogr temp table
+INSERT INTO zensus.ref_grid_100m (grid_id, geom)
+SELECT 
+    'CRS3035RES100mN' || CAST(y_mp AS INTEGER) || 'E' || CAST(x_mp AS INTEGER) as grid_id,
+    geom
+FROM zensus.ref_grid_100m_temp
+ON CONFLICT (grid_id) DO NOTHING;
+
+-- Create spatial index
+CREATE INDEX IF NOT EXISTS idx_grid_100m_geom 
+    ON zensus.ref_grid_100m USING GIST (geom);
+
+-- Drop temp table
+DROP TABLE zensus.ref_grid_100m_temp;
+
+-- Verify
+SELECT COUNT(*) as total_rows FROM zensus.ref_grid_100m;
+EOF
+            
+        else
+            # Use Python script for 1km and 10km (works fine with available memory)
+            python etl/load_grids.py "$GRID_FILE" "$grid_size"
+        fi
+        
         print_success "${grid_size} grid loaded"
     else
         print_error "${grid_size} grid file not found: $GRID_FILE"
