@@ -290,8 +290,9 @@ def load_zensus_csv(csv_path: Path, engine, validate_grid_ids: bool = True, chun
         
         try:
             with engine.connect() as conn:
-                # Prepare data for insertion
-                records = chunk[columns].to_dict('records')
+                # Prepare data for insertion (replace NaN with None for NULL values)
+                chunk_clean = chunk[columns].where(pd.notna(chunk[columns]), None)
+                records = chunk_clean.to_dict('records')
                 
                 # Build dynamic UPDATE clause safely
                 update_clause = ', '.join([f'{col} = EXCLUDED.{col}' for col in columns if col not in ['grid_id', 'year']])
@@ -318,7 +319,9 @@ def load_zensus_csv(csv_path: Path, engine, validate_grid_ids: bool = True, chun
             for idx, row in chunk.iterrows():
                 try:
                     with engine.connect() as conn:
-                        record = row[columns].to_dict()
+                        # Replace NaN with None for NULL values
+                        row_clean = row[columns].where(pd.notna(row[columns]), None)
+                        record = row_clean.to_dict()
                         conn.execute(insert_stmt, record)
                         conn.commit()
                         inserted_rows += 1
