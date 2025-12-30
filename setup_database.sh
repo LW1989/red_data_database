@@ -296,6 +296,16 @@ fi
 for grid_size in "${GRID_SIZES[@]}"; do
     GRID_FILE="data/geo_data/DE_Grid_ETRS89-LAEA_${grid_size}.gpkg"
     if [ -f "$GRID_FILE" ]; then
+        # Check if grid is already loaded
+        TABLE_NAME="ref_grid_${grid_size}"
+        ROW_COUNT=$($PSQL_CMD -t -c "SELECT COUNT(*) FROM zensus.${TABLE_NAME};" 2>/dev/null || echo "0")
+        ROW_COUNT=$(echo $ROW_COUNT | tr -d ' ')
+        
+        if [ "$ROW_COUNT" -gt 0 ]; then
+            echo "Skipping ${grid_size} grid (already loaded with ${ROW_COUNT} rows)"
+            continue
+        fi
+        
         echo "Loading ${grid_size} grid..."
         
         # Use ogr2ogr for 100m grid (memory-efficient), Python for others
@@ -420,6 +430,16 @@ print_section "Step 6: Loading Zensus Data"
 for grid_size in "${GRID_SIZES[@]}"; do
     CSV_DIR="data/zensus_data/${grid_size}"
     
+    # Check if Zensus data is already loaded (check one representative table)
+    SAMPLE_TABLE="fact_zensus_${grid_size}_zensus2022_bevoelkerungszahl"
+    ROW_COUNT=$($PSQL_CMD -t -c "SELECT COUNT(*) FROM zensus.${SAMPLE_TABLE};" 2>/dev/null || echo "0")
+    ROW_COUNT=$(echo $ROW_COUNT | tr -d ' ')
+    
+    if [ "$ROW_COUNT" -gt 0 ]; then
+        echo "Skipping ${grid_size} Zensus data (already loaded with ${ROW_COUNT} rows in ${SAMPLE_TABLE})"
+        continue
+    fi
+    
     echo "Loading all ${grid_size} CSV files..."
     # Load entire directory at once
     python etl/load_zensus.py "$CSV_DIR"
@@ -443,33 +463,41 @@ if [ "$SKIP_VG250" = false ]; then
     if [ -n "$VG250_DIR" ]; then
         echo "Found VG250 data in: $VG250_DIR"
         
-        # Look for VG250 shapefiles
-        FED_SHP=$(find "$VG250_DIR" -name "*VG250_LAN*.shp" -type f | head -n 1)
-        COUNTY_SHP=$(find "$VG250_DIR" -name "*VG250_KRS*.shp" -type f | head -n 1)
-        MUNI_SHP=$(find "$VG250_DIR" -name "*VG250_GEM*.shp" -type f | head -n 1)
+        # Check if VG250 data is already loaded
+        VG250_COUNT=$($PSQL_CMD -t -c "SELECT COUNT(*) FROM zensus.ref_federal_state;" 2>/dev/null || echo "0")
+        VG250_COUNT=$(echo $VG250_COUNT | tr -d ' ')
         
-        if [ -n "$FED_SHP" ]; then
-            echo "Loading federal states..."
-            python etl/load_vg250.py "$FED_SHP" --table ref_federal_state
-            print_success "Federal states loaded"
+        if [ "$VG250_COUNT" -gt 0 ]; then
+            echo "Skipping VG250 data (already loaded with ${VG250_COUNT} federal states)"
         else
-            echo "Federal states shapefile not found, skipping..."
-        fi
-        
-        if [ -n "$COUNTY_SHP" ]; then
-            echo "Loading counties..."
-            python etl/load_vg250.py "$COUNTY_SHP" --table ref_county
-            print_success "Counties loaded"
-        else
-            echo "Counties shapefile not found, skipping..."
-        fi
-        
-        if [ -n "$MUNI_SHP" ]; then
-            echo "Loading municipalities..."
-            python etl/load_vg250.py "$MUNI_SHP" --table ref_municipality --chunk-size 2000
-            print_success "Municipalities loaded"
-        else
-            echo "Municipalities shapefile not found, skipping..."
+            # Look for VG250 shapefiles
+            FED_SHP=$(find "$VG250_DIR" -name "*VG250_LAN*.shp" -type f | head -n 1)
+            COUNTY_SHP=$(find "$VG250_DIR" -name "*VG250_KRS*.shp" -type f | head -n 1)
+            MUNI_SHP=$(find "$VG250_DIR" -name "*VG250_GEM*.shp" -type f | head -n 1)
+            
+            if [ -n "$FED_SHP" ]; then
+                echo "Loading federal states..."
+                python etl/load_vg250.py "$FED_SHP" --table ref_federal_state
+                print_success "Federal states loaded"
+            else
+                echo "Federal states shapefile not found, skipping..."
+            fi
+            
+            if [ -n "$COUNTY_SHP" ]; then
+                echo "Loading counties..."
+                python etl/load_vg250.py "$COUNTY_SHP" --table ref_county
+                print_success "Counties loaded"
+            else
+                echo "Counties shapefile not found, skipping..."
+            fi
+            
+            if [ -n "$MUNI_SHP" ]; then
+                echo "Loading municipalities..."
+                python etl/load_vg250.py "$MUNI_SHP" --table ref_municipality --chunk-size 2000
+                print_success "Municipalities loaded"
+            else
+                echo "Municipalities shapefile not found, skipping..."
+            fi
         fi
     else
         echo "VG250 data directory not found, skipping..."
@@ -484,19 +512,26 @@ if [ "$SKIP_ELECTIONS" = false ]; then
     
     ELECTION_DIR="data/bundestagswahlen"
     if [ -d "$ELECTION_DIR" ]; then
-        # Load BTW2017
-        if [ -d "$ELECTION_DIR/btw2017" ]; then
-            BTW2017_SHP=$(find "$ELECTION_DIR/btw2017" -name "*.shp" -type f | head -n 1)
-            BTW2017_CSV=$(find "$ELECTION_DIR/btw2017" -name "*strukturdaten*.csv" -type f | head -n 1)
-            
-            if [ -n "$BTW2017_SHP" ] && [ -n "$BTW2017_CSV" ]; then
-                echo "Loading BTW2017 data..."
-                python etl/load_elections.py --shapefile "$BTW2017_SHP" --csv "$BTW2017_CSV" --election-year 2017
-                print_success "BTW2017 loaded"
-            else
-                echo "BTW2017 data incomplete, skipping..."
+        # Check if election data is already loaded
+        ELECTION_COUNT=$($PSQL_CMD -t -c "SELECT COUNT(*) FROM zensus.ref_electoral_district;" 2>/dev/null || echo "0")
+        ELECTION_COUNT=$(echo $ELECTION_COUNT | tr -d ' ')
+        
+        if [ "$ELECTION_COUNT" -gt 0 ]; then
+            echo "Skipping election data (already loaded with ${ELECTION_COUNT} electoral districts)"
+        else
+            # Load BTW2017
+            if [ -d "$ELECTION_DIR/btw2017" ]; then
+                BTW2017_SHP=$(find "$ELECTION_DIR/btw2017" -name "*.shp" -type f | head -n 1)
+                BTW2017_CSV=$(find "$ELECTION_DIR/btw2017" -name "*strukturdaten*.csv" -type f | head -n 1)
+                
+                if [ -n "$BTW2017_SHP" ] && [ -n "$BTW2017_CSV" ]; then
+                    echo "Loading BTW2017 data..."
+                    python etl/load_elections.py --shapefile "$BTW2017_SHP" --csv "$BTW2017_CSV" --election-year 2017
+                    print_success "BTW2017 loaded"
+                else
+                    echo "BTW2017 data incomplete, skipping..."
+                fi
             fi
-        fi
         
         # Load BTW2021
         if [ -d "$ELECTION_DIR/btw2021" ]; then
@@ -522,7 +557,8 @@ if [ "$SKIP_ELECTIONS" = false ]; then
                 python etl/load_elections.py --shapefile "$BTW2025_SHP" --csv "$BTW2025_CSV" --election-year 2025
                 print_success "BTW2025 loaded"
             else
-                echo "BTW2025 data incomplete, skipping..."
+                    echo "BTW2025 data incomplete, skipping..."
+                fi
             fi
         fi
     else
@@ -537,9 +573,17 @@ print_section "Step 9: Loading LWU Berlin Properties (Optional)"
 
 LWU_FILE="data/luw_berlin/lwu_berlin_small.geojson"
 if [ -f "$LWU_FILE" ]; then
-    echo "Loading LWU Berlin properties..."
-    python etl/load_lwu_properties.py "$LWU_FILE"
-    print_success "LWU properties loaded"
+    # Check if LWU data is already loaded
+    LWU_COUNT=$($PSQL_CMD -t -c "SELECT COUNT(*) FROM zensus.ref_lwu_properties;" 2>/dev/null || echo "0")
+    LWU_COUNT=$(echo $LWU_COUNT | tr -d ' ')
+    
+    if [ "$LWU_COUNT" -gt 0 ]; then
+        echo "Skipping LWU properties (already loaded with ${LWU_COUNT} properties)"
+    else
+        echo "Loading LWU Berlin properties..."
+        python etl/load_lwu_properties.py "$LWU_FILE"
+        print_success "LWU properties loaded"
+    fi
 else
     echo "LWU data file not found ($LWU_FILE), skipping..."
 fi
