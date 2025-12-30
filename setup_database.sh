@@ -433,21 +433,49 @@ print_section "Step 6: Loading Zensus Data"
 for grid_size in "${GRID_SIZES[@]}"; do
     CSV_DIR="data/zensus_data/${grid_size}"
     
-    # Check if Zensus data is already loaded (check one representative table)
-    SAMPLE_TABLE="fact_zensus_${grid_size}_zensus2022_bevoelkerungszahl"
-    ROW_COUNT=$(eval "$PSQL_CMD -t -c \"SELECT COUNT(*) FROM zensus.${SAMPLE_TABLE};\" 2>/dev/null" || echo "0")
-    ROW_COUNT=$(echo $ROW_COUNT | tr -d ' ')
+    echo "Processing ${grid_size} Zensus data..."
     
-    if [ "$ROW_COUNT" -gt 0 ]; then
-        echo "Skipping ${grid_size} Zensus data (already loaded with ${ROW_COUNT} rows in ${SAMPLE_TABLE})"
-        continue
-    fi
+    # Count total and loaded files
+    TOTAL_FILES=$(find "$CSV_DIR" -name "*.csv" -type f | wc -l | tr -d ' ')
+    LOADED_COUNT=0
+    SKIPPED_COUNT=0
     
-    echo "Loading all ${grid_size} CSV files..."
-    # Load entire directory at once
-    python etl/load_zensus.py "$CSV_DIR"
+    # Process each CSV file individually
+    for csv_file in "$CSV_DIR"/*.csv; do
+        if [ ! -f "$csv_file" ]; then
+            continue
+        fi
+        
+        # Extract table name from filename (simplified version of Python logic)
+        filename=$(basename "$csv_file")
+        # Remove Zensus2022_ prefix and grid suffix
+        dataset=$(echo "$filename" | sed 's/Zensus2022_//g' | sed 's/_[0-9]*km-Gitter\.csv//g' | sed 's/_100m-Gitter\.csv//g')
+        # Convert to lowercase and replace spaces/hyphens with underscores
+        dataset_clean=$(echo "$dataset" | tr '[:upper:]' '[:lower:]' | tr ' -' '__' | sed 's/__*/_/g')
+        
+        # Construct table name
+        TABLE_NAME="fact_zensus_${grid_size}_${dataset_clean}"
+        
+        # Check if table has data
+        ROW_COUNT=$(eval "$PSQL_CMD -t -c \"SELECT COUNT(*) FROM zensus.${TABLE_NAME};\" 2>/dev/null" || echo "0")
+        ROW_COUNT=$(echo $ROW_COUNT | tr -d ' ')
+        
+        if [ "$ROW_COUNT" -gt 0 ]; then
+            echo "  ✓ Skipping $(basename $csv_file) (${ROW_COUNT} rows already loaded)"
+            SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
+        else
+            echo "  → Loading $(basename $csv_file)..."
+            if [ "$grid_size" = "100m" ]; then
+                python etl/load_zensus.py "$csv_file" --no-validate
+            else
+                python etl/load_zensus.py "$csv_file"
+            fi
+            LOADED_COUNT=$((LOADED_COUNT + 1))
+        fi
+    done
     
-    print_success "All ${grid_size} Zensus data loaded"
+    echo "  Summary: ${LOADED_COUNT} files loaded, ${SKIPPED_COUNT} files skipped (${TOTAL_FILES} total)"
+    print_success "${grid_size} Zensus data processing complete"
 done
 
 # Optional: Load VG250 data
