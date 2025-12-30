@@ -5,7 +5,7 @@ This guide walks you through deploying the PostGIS-enabled German Zensus databas
 ## Table of Contents
 
 - [Prerequisites](#prerequisites)
-- [Installation Overview](#installation-overview)
+- [Deployment Overview](#deployment-overview)
 - [Method 1: Using Dokploy's Native Database Feature (Recommended)](#method-1-using-dokploys-native-database-feature-recommended)
 - [Method 2: Using Dokploy's Compose Feature](#method-2-using-dokploys-compose-feature)
 - [Post-Deployment: Loading Data](#post-deployment-loading-data)
@@ -19,15 +19,17 @@ This guide walks you through deploying the PostGIS-enabled German Zensus databas
 
 ### Server Requirements
 
-- **VPS or Dedicated Server** running:
+- **Dokploy Instance**: Access to a running Dokploy installation (managed by your team)
+  - Dokploy web interface accessible
+  - Appropriate permissions to create projects and databases
+
+- **Server Specifications** (for database):
   - Ubuntu 20.04+ or Debian 11+
   - Minimum 4GB RAM (8GB+ recommended for large datasets)
   - 50GB+ storage (depends on grid size: 10km ≈ 2GB, 1km ≈ 20GB, 100m ≈ 200GB)
-  - Docker and Docker Compose installed
   
 - **Network Access**:
   - SSH access to your server
-  - Ports 80, 443, and 3000 available for Dokploy
   - Port 5432 available for PostgreSQL (or custom port)
 
 ### Local Requirements
@@ -38,12 +40,31 @@ This guide walks you through deploying the PostGIS-enabled German Zensus databas
 
 ---
 
-## Installation Overview
+## Deployment Overview
+
+This guide assumes Dokploy is already installed and running on your server.
+
+**📝 Keep Track of Your Settings**: As you go through this guide, you'll set several values. Write them down:
+
+```
+Project Name:    _______________________
+Database Name:   _______________________  (e.g., red-data-db)
+Database User:   _______________________  (e.g., zensus_user)
+Database Password: _____________________  (keep this secure!)
+Docker Image:    postgis/postgis:15-3.4  (don't change this!)
+```
+
+You'll need these values when:
+- Connecting to the database
+- Configuring the `.env` file for data loading scripts
+- Setting up backups and monitoring
+
+---
 
 The deployment process consists of:
 
-1. **Install Dokploy** on your server
-2. **Deploy PostGIS database** via Dokploy web interface
+1. **Access Dokploy** web interface
+2. **Deploy PostGIS database** via Dokploy
 3. **Upload project files** to server
 4. **Load census data** using ETL scripts
 5. **Configure access** and backups
@@ -52,71 +73,41 @@ The deployment process consists of:
 
 ---
 
-## Step 1: Install Dokploy
+## 🚨 Don't Have SSH Access? Read This First!
 
-### 1.1 Connect to Your Server
+If you **don't have SSH access** to the server, you'll need to **collaborate with your colleague** who manages Dokploy. Here's the workflow:
 
-```bash
-# SSH into your server
-ssh your-username@your-server-ip
-```
+### What You Can Do in Dokploy (No SSH Needed):
+1. ✅ Create database via web interface (Steps 1-2)
+2. ✅ Configure database settings (image, credentials, ports)
+3. ✅ Enable PostGIS extension via Dokploy terminal (Step 4)
+4. ✅ Monitor database status and logs
 
-### 1.2 Install Docker (if not already installed)
+### What Requires Server Access (Ask Your Colleague):
+1. ❓ Upload project files to `/opt/zensus-database/`
+2. ❓ Upload census data files to `/opt/zensus-database/data/`
+3. ❓ Install Python dependencies
+4. ❓ Create `.env` configuration file
+5. ❓ Run ETL scripts to load data
 
-```bash
-# Install Docker using official script
-curl -fsSL https://get.docker.com -o get-docker.sh
-sudo sh get-docker.sh
+### Recommended Approach:
 
-# Install Docker Compose plugin
-sudo apt-get update
-sudo apt-get install docker-compose-plugin
+**Option 1: Full Collaboration**
+- You: Create and configure database in Dokploy
+- Colleague: Handle file uploads and run ETL scripts
+- You: Verify data and connect for analysis
 
-# Add your user to docker group (to run docker without sudo)
-sudo usermod -aG docker $USER
+**Option 2: Use Dokploy's Git Integration**
+- You: Set up Git repository deployment in Dokploy (no SSH needed)
+- Colleague: Upload data files and run scripts
+- You: Monitor via Dokploy interface
 
-# Log out and back in for group changes to take effect
-exit
-```
+**Option 3: Request Setup Script Execution**
+- Provide your colleague with the automated `setup_database.sh` script
+- They run it once, and everything is loaded automatically
+- You connect and start analyzing
 
-Reconnect via SSH:
-```bash
-ssh your-username@your-server-ip
-```
-
-### 1.3 Verify Docker Installation
-
-```bash
-docker --version
-# Should output: Docker version 24.x.x or higher
-
-docker compose version
-# Should output: Docker Compose version v2.x.x or higher
-```
-
-### 1.4 Install Dokploy
-
-```bash
-# Run official Dokploy installation script
-curl -sSL https://dokploy.com/install.sh | sudo sh
-```
-
-**Installation takes 2-5 minutes.** Once complete:
-
-```bash
-# Verify Dokploy is running
-docker ps | grep dokploy
-```
-
-### 1.5 Access Dokploy Web Interface
-
-1. Open your browser and navigate to: `http://your-server-ip:3000`
-2. **Create admin account** on first login:
-   - Username: Choose a secure username
-   - Email: Your email address
-   - Password: Strong password (save this!)
-
-**🔒 Security Note**: For production, set up a domain with SSL/TLS. See [Dokploy SSL Documentation](https://docs.dokploy.com/docs/core/security/ssl).
+**💡 Tip**: Share this deployment guide with your colleague - it has all the commands they'll need!
 
 ---
 
@@ -124,18 +115,21 @@ docker ps | grep dokploy
 
 This method uses Dokploy's built-in database management, which provides a clean UI for monitoring, backups, and configuration.
 
-### 2.1 Create a Project
+### Step 1: Access Dokploy
 
-1. **Log into Dokploy** at `http://your-server-ip:3000`
+1. **Open Dokploy web interface** in your browser (URL provided by your colleague/admin)
+2. **Log in** with your credentials
 
-2. **Click "Projects"** in the left sidebar
+### Step 2: Create a Project
 
-3. **Click "Create Project"** button
-   - **Name**: `zensus-database`
-   - **Description**: `German Zensus 2022 PostGIS Database`
+1. **Click "Projects"** in the left sidebar
+
+2. **Click "Create Project"** button
+   - **Name**: `red-data` (or `zensus-database`)
+   - **Description**: `PostGIS database for German Zensus 2022 census data, administrative boundaries, and electoral districts`
    - Click **"Create"**
 
-### 2.2 Create PostgreSQL Database
+### Step 3: Create PostgreSQL Database
 
 1. **Inside your project**, click **"Create Service"** → **"Database"**
 
@@ -145,49 +139,49 @@ This method uses Dokploy's built-in database management, which provides a clean 
 
    | Field | Value | Notes |
    |-------|-------|-------|
-   | **Name** | `zensus-postgres` | Service name in Dokploy |
-   | **Database Name** | `zensus_db` | Name of the PostgreSQL database |
-   | **Username** | `zensus_user` | Database user |
-   | **Password** | `[generate strong password]` | Save this securely! |
-   | **Version** | `15` or `16` | PostgreSQL version |
+   | **Name** | `red-data` | Project name in Dokploy |
+   | **App Name** | `datahub-reddata` | Application identifier |
+   | **Description** | `Spatial database for German census and electoral data` | Optional but helpful |
+   | **Database Name** | `red-data-db` | Name of the PostgreSQL database (or `zensus_db`) |
+   | **Database User** | `zensus_user` | Database user |
+   | **Database Password** | `[generate strong password]` | Save this securely! |
+   | **Docker Image** | `postgis/postgis:15-3.4` | **⚠️ Important: Use PostGIS, not default postgres** |
    | **Port** | `5432` | Internal port (leave default) |
+
+   **⚠️ Critical**: Make sure to change the **Docker Image** field from `postgres:15` to `postgis/postgis:15-3.4` to enable spatial/GIS functionality!
 
 4. **Click "Create"** to initialize the database
 
-### 2.3 Configure PostGIS Extension
+### Step 4: Enable PostGIS Extension
 
-**Option A: Manual Installation (After Deployment)**
-
-After the database is deployed, you'll need to enable PostGIS:
+After the database is deployed, you need to activate the PostGIS extension:
 
 1. **In Dokploy**, go to your database service
 2. **Click "Terminal"** tab to open database shell
 3. **Connect to database**:
    ```bash
-   psql -U zensus_user -d zensus_db
+   psql -U zensus_user -d red-data-db
    ```
-4. **Install PostGIS extension**:
+   (Replace `red-data-db` with your actual database name if different)
+
+4. **Enable PostGIS extension**:
    ```sql
-   CREATE EXTENSION postgis;
-   CREATE EXTENSION postgis_topology;
+   CREATE EXTENSION IF NOT EXISTS postgis;
+   CREATE EXTENSION IF NOT EXISTS postgis_topology;
    ```
+
 5. **Verify installation**:
    ```sql
    SELECT PostGIS_Full_Version();
    ```
-   You should see PostGIS version information.
+   You should see PostGIS version information like:
+   ```
+   POSTGIS="3.4.0" [EXTENSION] PGSQL="150" GEOS="3.11.1" PROJ="9.1.1" ...
+   ```
 
-**Option B: Custom Docker Image (Recommended)**
+**Note**: Since you used the `postgis/postgis:15-3.4` image, PostGIS is already installed - you just need to enable the extension in your database.
 
-To use a PostGIS-enabled image directly:
-
-1. **In database settings**, find **"Image"** field
-2. **Change from** `postgres:15` **to** `postgis/postgis:15-3.4`
-3. **Save and redeploy**
-
-This ensures PostGIS is pre-installed.
-
-### 2.4 Configure External Access (Optional)
+### Step 5: Configure External Access (Optional)
 
 If you need to access the database from outside the server (e.g., from your local machine):
 
@@ -205,13 +199,13 @@ If you need to access the database from outside the server (e.g., from your loca
 
 **🔒 Security Recommendation**: Use SSH tunneling instead of exposing the database port publicly (see [Accessing Your Database](#accessing-your-database) section).
 
-### 2.5 Deploy Database
+### Step 6: Deploy Database
 
 1. **Click "Deploy"** button in the database service
 2. **Monitor logs** to ensure successful startup
 3. **Verify status**: Service should show as "Running" (green indicator)
 
-### 2.6 Configure Database Volumes (Important for Persistence)
+### Step 7: Configure Database Volumes (Important for Persistence)
 
 1. **In database settings**, go to **"Volumes"** tab
 2. **Verify the following volumes are configured**:
@@ -234,11 +228,11 @@ If you need to access the database from outside the server (e.g., from your loca
 
 This method deploys the database using the existing `docker-compose.yml` file from this repository. Useful if you want full control over the Docker configuration.
 
-### 2.1 Create a Project
+### Step 1-2: Access Dokploy and Create Project
 
-Same as Method 1, Step 2.1.
+Follow Steps 1-2 from Method 1 above.
 
-### 2.2 Create Compose Service
+### Step 3: Create Compose Service
 
 1. **Inside your project**, click **"Create Service"** → **"Compose"**
 
@@ -248,7 +242,9 @@ Same as Method 1, Step 2.1.
      - **Git Repository**: If your code is on GitHub/GitLab
      - **Raw Compose**: Paste docker-compose.yml content directly
 
-### 2.3 Option A: Using Git Repository
+### Step 4: Configure Compose Source
+
+**Option A: Using Git Repository**
 
 1. **Select "Git Repository"**
 
@@ -263,7 +259,7 @@ Same as Method 1, Step 2.1.
 
 4. **Click "Create"**
 
-### 2.4 Option B: Using Raw Compose
+**Option B: Using Raw Compose**
 
 1. **Select "Raw Compose"**
 
@@ -300,7 +296,7 @@ Same as Method 1, Step 2.1.
 
 3. **Click "Create"**
 
-### 2.5 Configure Environment Variables
+### Step 5: Configure Environment Variables
 
 1. **Go to "Environment"** tab
 
@@ -314,7 +310,7 @@ Same as Method 1, Step 2.1.
 
 3. **Click "Save"**
 
-### 2.6 Deploy Compose Stack
+### Step 6: Deploy Compose Stack
 
 1. **Click "Deploy"** button
 2. **Monitor logs** for successful deployment
@@ -324,9 +320,39 @@ Same as Method 1, Step 2.1.
 
 ## Step 3: Upload Project to Server
 
-You need to upload the project files (ETL scripts, schema files, etc.) to your server to load data.
+You need to get the project files (ETL scripts, schema files, etc.) onto your server to load data.
 
-### 3.1 Option A: Using Git (Recommended)
+### Option A: Using Dokploy's Git Integration (Recommended - No SSH Required)
+
+If your project is on GitHub/GitLab and you **don't have SSH access**, use Dokploy to clone the repository:
+
+1. **In Dokploy**, go to your project
+2. **Click "Create Service"** → Select **"Application"**
+3. **Configure Application**:
+   - **Name**: `zensus-etl-scripts`
+   - **Source Type**: **Git Repository**
+   - **Repository URL**: `https://github.com/YOUR_USERNAME/red_data_database.git`
+   - **Branch**: `master` or `main`
+   - **Build Path**: `/` (root)
+   
+4. **Important Settings**:
+   - **Autodeploy**: Enable if you want automatic updates on git push
+   - **Build Command**: Leave empty (we're not building, just cloning files)
+   - **Deploy**: You can skip deploying this as a service - we just need the files
+
+5. **Alternative: Work with Your Colleague**
+   
+   If Dokploy's Git integration doesn't fit your workflow, **ask your colleague who manages the server** to:
+   
+   ```bash
+   # They can run these commands via SSH:
+   sudo mkdir -p /opt/zensus-database
+   sudo chown $USER:$USER /opt/zensus-database
+   cd /opt/zensus-database
+   git clone https://github.com/YOUR_USERNAME/red_data_database.git .
+   ```
+
+### Option B: Using SSH (If You Have Access)
 
 ```bash
 # SSH into server
@@ -341,8 +367,9 @@ cd /opt/zensus-database
 git clone https://github.com/YOUR_USERNAME/red_data_database.git .
 ```
 
-### 3.2 Option B: Using rsync (From Local Machine)
+### Option C: Using File Transfer Tools (From Local Machine)
 
+**Using rsync**:
 ```bash
 # On your local machine (not on server)
 rsync -avz --exclude 'venv' --exclude '__pycache__' --exclude '.git' \
@@ -350,16 +377,16 @@ rsync -avz --exclude 'venv' --exclude '__pycache__' --exclude '.git' \
   your-username@your-server-ip:/opt/zensus-database/
 ```
 
-### 3.3 Option C: Using scp
-
+**Using scp**:
 ```bash
 # On your local machine
 scp -r /path/to/local/red_data_database \
   your-username@your-server-ip:/opt/zensus-database/
 ```
 
-### 3.4 Verify Files
+### Verify Files Are on Server
 
+**If you have SSH access**:
 ```bash
 # On server
 cd /opt/zensus-database
@@ -375,20 +402,48 @@ ls -la
 # README.md
 ```
 
+**If you don't have SSH access**:
+- Ask your colleague to verify the files were cloned successfully
+- Check Dokploy's file browser (if available) for the application you created
+
 ---
 
 ## Step 4: Upload Census Data to Server
 
-The census data files are large and need to be uploaded separately.
+The census data files are large (10km ≈ 2GB, 1km ≈ 20GB) and need to be uploaded separately.
 
-### 4.1 Using rsync (Recommended for Large Files)
+### Option A: Ask Your Colleague (Recommended if No SSH Access)
 
+If you don't have SSH/SFTP access:
+
+1. **Provide your colleague with**:
+   - Link to download census data files
+   - Or send them a shared drive link (Google Drive, Dropbox, etc.)
+   - Expected directory structure (see below)
+
+2. **Ask them to place files in**: `/opt/zensus-database/data/`
+
+### Option B: Using File Transfer (If You Have Access)
+
+**Using rsync** (recommended for large files - supports resume):
 ```bash
 # On your local machine
 rsync -avz --progress \
   /path/to/local/data/ \
   your-username@your-server-ip:/opt/zensus-database/data/
 ```
+
+**Using scp**:
+```bash
+# On your local machine
+scp -r /path/to/local/data \
+  your-username@your-server-ip:/opt/zensus-database/
+```
+
+**Using SFTP client** (GUI tools like FileZilla, Cyberduck):
+- Connect to server via SFTP
+- Navigate to `/opt/zensus-database/`
+- Upload `data/` folder
 
 **Expected data structure**:
 ```
@@ -406,16 +461,9 @@ rsync -avz --progress \
 └── luw_berlin/
 ```
 
-### 4.2 Using scp
+### Verify Data Upload
 
-```bash
-# On your local machine
-scp -r /path/to/local/data \
-  your-username@your-server-ip:/opt/zensus-database/
-```
-
-### 4.3 Verify Data Upload
-
+**If you have SSH access**:
 ```bash
 # On server
 du -sh /opt/zensus-database/data/*
@@ -427,11 +475,17 @@ du -sh /opt/zensus-database/data/*
 # etc.
 ```
 
+**If you don't have SSH access**:
+- Ask your colleague to verify the file sizes
+- Or check Dokploy's file browser (if available)
+
 ---
 
 ## Step 5: Setup Python Environment on Server
 
-### 5.1 Install Python Dependencies
+This step prepares the Python environment to run the ETL scripts that load data into your database.
+
+### If You Have SSH Access:
 
 ```bash
 # SSH into server
@@ -453,15 +507,41 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### 5.2 Create Environment Configuration
+### If You DON'T Have SSH Access:
 
+**Ask your colleague to run the setup commands**, or provide them with this setup script:
+
+```bash
+#!/bin/bash
+# Python environment setup script for red_data_database
+
+cd /opt/zensus-database
+
+# Install Python dependencies
+sudo apt-get update
+sudo apt-get install -y python3 python3-pip python3-venv
+
+# Create virtual environment
+python3 -m venv venv
+source venv/bin/activate
+
+# Install requirements
+pip install --upgrade pip
+pip install -r requirements.txt
+
+echo "Python environment setup complete!"
+```
+
+### Create Environment Configuration
+
+**If you have SSH access**:
 ```bash
 # Create .env file for ETL scripts
 cat > .env << 'EOF'
 # Database Configuration
 DB_HOST=localhost
 DB_PORT=5432
-DB_NAME=zensus_db
+DB_NAME=red-data-db
 DB_USER=zensus_user
 DB_PASSWORD=your_secure_production_password
 EOF
@@ -470,16 +550,36 @@ EOF
 chmod 600 .env
 ```
 
-**⚠️ Important**: Replace `your_secure_production_password` with the actual password you set in Dokploy.
+**If you don't have SSH access**:
+
+Ask your colleague to create a file `/opt/zensus-database/.env` with this content:
+
+```bash
+# Database Configuration
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=red-data-db
+DB_USER=zensus_user
+DB_PASSWORD=your_actual_password_here
+```
+
+**⚠️ Important Configuration Notes**: 
+- Replace `your_actual_password_here` with the actual password you set in Dokploy
+- Replace `red-data-db` with your actual database name if different (e.g., `zensus_db`)
+- `DB_HOST=localhost` works because ETL scripts run on the same server as the database
+- `DB_PORT=5432` is the internal Docker port (not the external port if you configured one)
 
 ---
 
 ## Step 6: Load Data into Database
 
-### 6.1 Option A: Using Automated Setup Script (Recommended)
+**🔑 Note About Access**: Loading data requires running commands on the server. If you don't have SSH access, **coordinate with your colleague** to run these commands, or ask them to set up a scheduled task/cron job in Dokploy.
+
+### Option A: Using Automated Setup Script (Recommended)
 
 The repository includes an automated setup script that handles all data loading:
 
+**If you have SSH access**:
 ```bash
 # SSH into server
 ssh your-username@your-server-ip
@@ -497,6 +597,14 @@ chmod +x setup_database.sh
 
 # Or skip optional data
 ./setup_database.sh --full --skip-vg250 --skip-elections
+```
+
+**If you don't have SSH access**, share these commands with your colleague to run:
+```bash
+cd /opt/zensus-database
+source venv/bin/activate
+chmod +x setup_database.sh
+./setup_database.sh --test  # Start with test mode
 ```
 
 **What the script does**:
@@ -758,6 +866,210 @@ WHERE datname = 'zensus_db';
 ---
 
 ## Troubleshooting
+
+### 🔥 Common Deployment Issues (Lessons Learned)
+
+#### Issue 1: Tables Don't Exist When Running ETL Scripts
+
+**Symptom**:
+```
+psycopg2.errors.UndefinedTable: relation "zensus.ref_grid_10km" does not exist
+```
+
+**Root Cause**: In containerized deployments (Dokploy), the SQL schema files in `docker/init/` are NOT automatically applied because the database container starts independently from the ETL container.
+
+**Solution**: The `setup_database.sh` script (v2.0+) now automatically applies SQL schema files when running in containerized mode.
+
+```bash
+# Update to latest version
+cd /app/red_data_database
+curl -o setup_database.sh https://raw.githubusercontent.com/LW1989/red_data_database/master/setup_database.sh
+chmod +x setup_database.sh
+
+# Run setup (it will auto-install psql and apply schemas)
+./setup_database.sh --full
+```
+
+**Manual Fix** (if script fails):
+```bash
+# Install psql client
+apt-get update && apt-get install -y postgresql-client
+
+# Apply schemas manually in order
+cd /app/red_data_database
+export PGPASSWORD="your_db_password"
+psql -h your-db-host -U your-db-user -d your-db-name -f docker/init/01_extensions.sql
+psql -h your-db-host -U your-db-user -d your-db-name -f docker/init/02_schema.sql
+psql -h your-db-host -U your-db-user -d your-db-name -f docker/init/03_vg250_schema.sql
+psql -h your-db-host -U your-db-user -d your-db-name -f docker/init/04_bundestagswahlen_schema.sql
+psql -h your-db-host -U your-db-user -d your-db-name -f docker/init/05_lwu_properties_schema.sql
+```
+
+---
+
+#### Issue 2: Container Can't Resolve Database Hostname
+
+**Symptom**:
+```
+could not translate host name "datahub-reddata" to address: Temporary failure in name resolution
+```
+
+**Root Cause**: Incorrect or incomplete `DB_HOST` in Python ETL service environment variables.
+
+**Solution**: Use the **full internal hostname** from Dokploy:
+
+1. Go to your Dokploy database → **General** tab
+2. Find **"Internal Host"** (e.g., `datahub-reddata-smnviv-data`)
+3. Update your Python service's environment variables:
+   ```yaml
+   environment:
+     - DB_HOST=datahub-reddata-smnviv-data  # Use FULL internal hostname
+   ```
+
+**❌ Wrong**: `DB_HOST=datahub-reddata` (partial name - DNS won't resolve)  
+**✅ Right**: `DB_HOST=datahub-reddata-smnviv-data` (full internal hostname from Dokploy UI)
+
+---
+
+#### Issue 3: Google Drive Download Limits (50 Files)
+
+**Symptom**:
+```
+The gdrive folder has more than 50 files, gdrive can't download more than this limit.
+```
+
+**Root Cause**: `gdown` tool has a 50-file limit per folder for public links.
+
+**Solutions**:
+
+**Option A: Use rclone (Recommended for Large Datasets)**
+```bash
+# On server: Install rclone
+apt-get update && apt-get install -y rclone
+
+# On local machine with browser: Configure rclone
+rclone config
+# Follow prompts to authorize Google Drive
+
+# Add Google Drive folders to "My Drive":
+# 1. Open folder links in browser while logged in
+# 2. Right-click folder → "Add shortcut to Drive" → "My Drive"
+
+# On server: Download with rclone
+rclone copy "gdrive:10km" /app/red_data_database/data/zensus_data/10km/ -P
+rclone copy "gdrive:1km" /app/red_data_database/data/zensus_data/1km/ -P
+rclone copy "gdrive:100m" /app/red_data_database/data/zensus_data/100m/ -P
+```
+
+**Option B: Download Subfolders Separately with gdown**
+Get individual subfolder URLs and download in batches:
+```bash
+gdown --folder "URL_TO_10KM_FOLDER" -O data/zensus_data/10km/
+gdown --folder "URL_TO_1KM_FOLDER" -O data/zensus_data/1km/
+gdown --folder "URL_TO_100M_FOLDER" -O data/zensus_data/100m/
+gdown --folder "URL_TO_BTW2017_FOLDER" -O data/bundestagswahlen/btw2017/
+# etc...
+```
+
+**Option C: SCP from Colleague with SSH Access**
+```bash
+# If colleague has data locally
+scp -r /local/path/to/data/* user@server:/app/red_data_database/data/
+```
+
+---
+
+#### Issue 4: Git Not Installed in Python Container
+
+**Symptom**:
+```
+bash: git: command not found
+```
+
+**Root Cause**: The `python:3.11-slim` base image doesn't include git.
+
+**Solutions**:
+
+**Quick Fix**:
+```bash
+apt-get update && apt-get install -y git
+git pull origin master
+```
+
+**Or Download Directly Without Git**:
+```bash
+# Download specific file
+curl -o setup_database.sh https://raw.githubusercontent.com/LW1989/red_data_database/master/setup_database.sh
+
+# Or clone with curl + unzip
+curl -L https://github.com/LW1989/red_data_database/archive/refs/heads/master.zip -o repo.zip
+apt-get install -y unzip
+unzip repo.zip
+mv red_data_database-master/* /app/red_data_database/
+```
+
+---
+
+#### Issue 5: Nested Directories After Download
+
+**Symptom**: Files end up in `data/zensus_data/10km/10km/` instead of `data/zensus_data/10km/`
+
+**Root Cause**: `gdown` creates a subfolder with the same name as the Google Drive folder.
+
+**Solution**:
+```bash
+# Fix nested directories for all grid sizes
+cd /app/red_data_database
+for dir in 10km 1km 100m; do
+    if [ -d "data/zensus_data/$dir/$dir" ]; then
+        mv data/zensus_data/$dir/$dir/* data/zensus_data/$dir/
+        rmdir data/zensus_data/$dir/$dir
+        echo "✓ Fixed $dir"
+    fi
+done
+```
+
+---
+
+#### Issue 6: pip/Python Not Available in Database Container
+
+**Symptom**:
+```
+bash: pip: command not found
+```
+
+**Root Cause**: Trying to run Python/ETL scripts inside the PostgreSQL database container (which only has PostgreSQL).
+
+**Solution**: ETL scripts must run in a **separate Python container** or on the **host machine**. Create a Python service in Dokploy:
+
+```yaml
+# docker-compose.yml for Python ETL Service
+version: '3.8'
+
+services:
+  python-etl:
+    image: python:3.11-slim
+    container_name: zensus-etl
+    working_dir: /app
+    volumes:
+      - etl-data:/app/data
+      - etl-scripts:/app
+    environment:
+      - DB_HOST=your-database-internal-hostname  # From Dokploy DB settings
+      - DB_PORT=5432
+      - DB_NAME=red-data-db
+      - DB_USER=zensus_user
+      - DB_PASSWORD=your_password
+    command: tail -f /dev/null  # Keep container running
+
+volumes:
+  etl-data:
+  etl-scripts:
+```
+
+Then exec into this container to run ETL scripts, not the database container.
+
+---
 
 ### Database Won't Start
 

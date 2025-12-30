@@ -626,7 +626,19 @@ volumes:
 
 ## Deploying on Server with Dokploy
 
-[Dokploy](https://dokploy.com/) is a self-hosted Docker deployment platform (similar to Portainer) that simplifies managing Docker containers on a server. This guide provides two approaches: using Dokploy's web interface or running Docker Compose directly on the server.
+[Dokploy](https://dokploy.com/) is a self-hosted Docker deployment platform (similar to Portainer) that simplifies managing Docker containers on a server.
+
+**📖 For detailed step-by-step instructions, see: [DOKPLOY_DEPLOYMENT_GUIDE.md](DOKPLOY_DEPLOYMENT_GUIDE.md)**
+
+The comprehensive guide includes:
+- Dokploy installation and setup
+- Two deployment methods (Native Database vs Compose)
+- Data loading automation
+- Backup and maintenance
+- Security best practices
+- Troubleshooting
+
+Below is a quick reference. For production deployments, use the detailed guide above.
 
 ### Prerequisites
 
