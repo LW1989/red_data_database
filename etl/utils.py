@@ -151,9 +151,9 @@ def normalize_integer(value: Any) -> Optional[int]:
     try:
         return int(str_value)
     except (ValueError, TypeError):
-        # Only log non-empty values (empty strings are expected to become NULL)
-        if str_value and str_value.strip():
-            logger.warning(f"Could not convert '{value}' to int, returning None")
+        # Empty strings are expected to become NULL - only log actual conversion issues
+        if value and str(value).strip() not in ['', '-', '—']:
+            logger.debug(f"Could not convert '{value}' to int, returning None")
         return None
 
 
