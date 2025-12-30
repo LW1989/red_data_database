@@ -116,7 +116,7 @@ def detect_table_mapping(csv_path: Path) -> tuple:
     return None, None, None
 
 
-def load_zensus_csv(csv_path: Path, engine, validate_grid_ids: bool = True, chunk_size: int = 10000):
+def load_zensus_csv(csv_path: Path, engine, validate_grid_ids: bool = True, chunk_size: int = 50000):
     """
     Load a Zensus CSV file into the appropriate fact table.
     Dynamically handles all Zensus datasets.
@@ -374,8 +374,8 @@ Examples:
     parser.add_argument(
         '--chunk-size',
         type=int,
-        default=10000,
-        help='Number of rows to insert per chunk (default: 10000)'
+        default=50000,
+        help='Number of rows to insert per chunk (default: 50000)'
     )
     parser.add_argument(
         '--recursive',
