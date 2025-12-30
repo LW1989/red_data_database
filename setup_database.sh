@@ -177,6 +177,9 @@ if [ "$CONTAINERIZED" = true ]; then
         fi
     fi
     
+    # Define psql command for reuse
+    PSQL_CMD="PGPASSWORD=$DB_PASSWORD psql -h $DB_HOST -U $DB_USER -d $DB_NAME -p $DB_PORT"
+    
     print_section "Step 3: Applying Database Schema"
     
     echo "Applying SQL schema files to database..."
@@ -298,7 +301,7 @@ for grid_size in "${GRID_SIZES[@]}"; do
     if [ -f "$GRID_FILE" ]; then
         # Check if grid is already loaded
         TABLE_NAME="ref_grid_${grid_size}"
-        ROW_COUNT=$($PSQL_CMD -t -c "SELECT COUNT(*) FROM zensus.${TABLE_NAME};" 2>/dev/null || echo "0")
+        ROW_COUNT=$(eval "$PSQL_CMD -t -c \"SELECT COUNT(*) FROM zensus.${TABLE_NAME};\" 2>/dev/null" || echo "0")
         ROW_COUNT=$(echo $ROW_COUNT | tr -d ' ')
         
         if [ "$ROW_COUNT" -gt 0 ]; then
@@ -432,7 +435,7 @@ for grid_size in "${GRID_SIZES[@]}"; do
     
     # Check if Zensus data is already loaded (check one representative table)
     SAMPLE_TABLE="fact_zensus_${grid_size}_zensus2022_bevoelkerungszahl"
-    ROW_COUNT=$($PSQL_CMD -t -c "SELECT COUNT(*) FROM zensus.${SAMPLE_TABLE};" 2>/dev/null || echo "0")
+    ROW_COUNT=$(eval "$PSQL_CMD -t -c \"SELECT COUNT(*) FROM zensus.${SAMPLE_TABLE};\" 2>/dev/null" || echo "0")
     ROW_COUNT=$(echo $ROW_COUNT | tr -d ' ')
     
     if [ "$ROW_COUNT" -gt 0 ]; then
@@ -464,7 +467,7 @@ if [ "$SKIP_VG250" = false ]; then
         echo "Found VG250 data in: $VG250_DIR"
         
         # Check if VG250 data is already loaded
-        VG250_COUNT=$($PSQL_CMD -t -c "SELECT COUNT(*) FROM zensus.ref_federal_state;" 2>/dev/null || echo "0")
+        VG250_COUNT=$(eval "$PSQL_CMD -t -c \"SELECT COUNT(*) FROM zensus.ref_federal_state;\" 2>/dev/null" || echo "0")
         VG250_COUNT=$(echo $VG250_COUNT | tr -d ' ')
         
         if [ "$VG250_COUNT" -gt 0 ]; then
@@ -513,7 +516,7 @@ if [ "$SKIP_ELECTIONS" = false ]; then
     ELECTION_DIR="data/bundestagswahlen"
     if [ -d "$ELECTION_DIR" ]; then
         # Check if election data is already loaded
-        ELECTION_COUNT=$($PSQL_CMD -t -c "SELECT COUNT(*) FROM zensus.ref_electoral_district;" 2>/dev/null || echo "0")
+        ELECTION_COUNT=$(eval "$PSQL_CMD -t -c \"SELECT COUNT(*) FROM zensus.ref_electoral_district;\" 2>/dev/null" || echo "0")
         ELECTION_COUNT=$(echo $ELECTION_COUNT | tr -d ' ')
         
         if [ "$ELECTION_COUNT" -gt 0 ]; then
@@ -574,7 +577,7 @@ print_section "Step 9: Loading LWU Berlin Properties (Optional)"
 LWU_FILE="data/luw_berlin/lwu_berlin_small.geojson"
 if [ -f "$LWU_FILE" ]; then
     # Check if LWU data is already loaded
-    LWU_COUNT=$($PSQL_CMD -t -c "SELECT COUNT(*) FROM zensus.ref_lwu_properties;" 2>/dev/null || echo "0")
+    LWU_COUNT=$(eval "$PSQL_CMD -t -c \"SELECT COUNT(*) FROM zensus.ref_lwu_properties;\" 2>/dev/null" || echo "0")
     LWU_COUNT=$(echo $LWU_COUNT | tr -d ' ')
     
     if [ "$LWU_COUNT" -gt 0 ]; then
