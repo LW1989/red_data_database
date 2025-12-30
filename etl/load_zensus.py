@@ -254,8 +254,8 @@ def load_zensus_csv(csv_path: Path, engine, validate_grid_ids: bool = True, chun
         numeric_columns=numeric_cols
     )
     
-    # Validate grid_ids if requested
-    if validate_grid_ids:
+    # Validate grid_ids if requested (skip for 100m due to performance - 38M reference rows)
+    if validate_grid_ids and grid_size != '100m':
         logger.info("Validating grid_ids against reference tables...")
         invalid_grid_ids = []
         for grid_id in df_processed['grid_id'].unique():
@@ -268,6 +268,8 @@ def load_zensus_csv(csv_path: Path, engine, validate_grid_ids: bool = True, chun
             initial_count = len(df_processed)
             df_processed = df_processed[~df_processed['grid_id'].isin(invalid_grid_ids)]
             logger.info(f"Removed {initial_count - len(df_processed)} rows with invalid grid_ids")
+    elif validate_grid_ids and grid_size == '100m':
+        logger.info("Skipping grid_id validation for 100m (performance: 38M reference rows)")
     
     # Insert data in chunks
     total_rows = len(df_processed)
