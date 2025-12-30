@@ -306,7 +306,16 @@ for grid_size in "${GRID_SIZES[@]}"; do
             if ! command -v ogr2ogr &> /dev/null; then
                 echo "Installing GDAL tools for ogr2ogr..."
                 if [ "$IN_CONTAINER" = true ]; then
-                    apt-get update -qq && apt-get install -y -qq gdal-bin > /dev/null 2>&1
+                    apt-get update -qq
+                    apt-get install -y gdal-bin
+                    
+                    # Verify installation succeeded
+                    if ! command -v ogr2ogr &> /dev/null; then
+                        print_error "Failed to install ogr2ogr. Please install manually:"
+                        echo "  apt-get update && apt-get install -y gdal-bin"
+                        exit 1
+                    fi
+                    echo "✓ GDAL tools installed successfully"
                 else
                     print_error "ogr2ogr not found. Please install GDAL tools:"
                     echo "  macOS: brew install gdal"
