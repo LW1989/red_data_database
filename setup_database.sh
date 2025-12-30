@@ -9,6 +9,7 @@
 #   --full              Load all data: 100m, 1km, and 10km (default: 1km + 10km)
 #   --skip-vg250        Skip loading VG250 administrative boundaries
 #   --skip-elections    Skip loading Bundestagswahlen election data
+#   --containerized     Skip Docker checks (for running inside containers)
 #   --help              Show this help message
 
 set -e  # Exit on error
@@ -25,6 +26,12 @@ TEST_MODE=false
 FULL_MODE=false
 SKIP_VG250=false
 SKIP_ELECTIONS=false
+CONTAINERIZED=false
+
+# Auto-detect containerized environment
+if [ -f /.dockerenv ] || [ -n "$KUBERNETES_SERVICE_HOST" ] || [ -n "$DB_HOST" ]; then
+    CONTAINERIZED=true
+fi
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -45,6 +52,10 @@ while [[ $# -gt 0 ]]; do
             SKIP_ELECTIONS=true
             shift
             ;;
+        --containerized)
+            CONTAINERIZED=true
+            shift
+            ;;
         --help)
             echo "Automated setup script for German Zensus 2022 Database"
             echo ""
@@ -55,9 +66,13 @@ while [[ $# -gt 0 ]]; do
             echo "  --full              Load all data: 100m, 1km, and 10km"
             echo "  --skip-vg250        Skip loading VG250 administrative boundaries"
             echo "  --skip-elections    Skip loading Bundestagswahlen election data"
+            echo "  --containerized     Skip Docker checks (auto-detected in containers)"
             echo "  --help              Show this help message"
             echo ""
             echo "Default behavior (no flags): Load 1km + 10km Zensus data"
+            echo ""
+            echo "Containerized mode: Automatically detected when DB_HOST env var is set"
+            echo "or when running inside Docker/Kubernetes containers."
             exit 0
             ;;
         *)
@@ -109,76 +124,121 @@ START_TIME=$(date +%s)
 
 print_section "Step 1: Checking Prerequisites"
 
-# Check Docker
-if command_exists docker; then
-    print_success "Docker is installed"
-else
-    print_error "Docker is not installed. Please install Docker first."
-    exit 1
-fi
-
-# Check Docker Compose
-if command_exists docker-compose || docker compose version >/dev/null 2>&1; then
-    print_success "Docker Compose is available"
-else
-    print_error "Docker Compose is not available. Please install it first."
-    exit 1
-fi
-
-# Check Python
-if command_exists python3; then
-    PYTHON_VERSION=$(python3 --version)
-    print_success "Python is installed: $PYTHON_VERSION"
-else
-    print_error "Python 3 is not installed. Please install Python 3.8+."
-    exit 1
-fi
-
-print_section "Step 2: Setting Up Virtual Environment"
-
-if [ ! -d "venv" ]; then
-    python3 -m venv venv
-    print_success "Virtual environment created"
-else
-    print_success "Virtual environment already exists"
-fi
-
-# Activate virtual environment
-source venv/bin/activate
-print_success "Virtual environment activated"
-
-print_section "Step 3: Installing Python Dependencies"
-
-pip install -r requirements.txt -q
-print_success "Python dependencies installed"
-
-print_section "Step 4: Starting Docker Containers"
-
-# Stop any existing containers
-docker-compose down 2>/dev/null || true
-
-# Start containers
-docker-compose up -d
-
-# Wait for PostgreSQL to be ready
-echo "Waiting for PostgreSQL to be ready..."
-sleep 10
-
-# Check if database is ready
-MAX_RETRIES=30
-RETRY_COUNT=0
-while ! docker-compose exec -T postgres pg_isready -U zensus_user -d zensus_db >/dev/null 2>&1; do
-    RETRY_COUNT=$((RETRY_COUNT + 1))
-    if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
-        print_error "PostgreSQL failed to start after ${MAX_RETRIES} attempts"
-        docker-compose logs postgres
+if [ "$CONTAINERIZED" = true ]; then
+    echo -e "${YELLOW}Running in containerized mode - skipping Docker checks${NC}"
+    
+    # Check for required environment variables
+    if [ -z "$DB_HOST" ]; then
+        print_error "DB_HOST environment variable not set"
         exit 1
     fi
-    echo "Waiting for PostgreSQL... (${RETRY_COUNT}/${MAX_RETRIES})"
-    sleep 2
-done
+    
+    # Set defaults for other DB variables if not set
+    export DB_PORT=${DB_PORT:-5432}
+    export DB_NAME=${DB_NAME:-zensus_db}
+    export DB_USER=${DB_USER:-zensus_user}
+    export DB_PASSWORD=${DB_PASSWORD:-zensus123}
+    
+    print_success "Database connection configured: ${DB_USER}@${DB_HOST}:${DB_PORT}/${DB_NAME}"
+    
+    # Check Python
+    if command_exists python3 || command_exists python; then
+        PYTHON_CMD=$(command_exists python3 && echo "python3" || echo "python")
+        PYTHON_VERSION=$($PYTHON_CMD --version)
+        print_success "Python is available: $PYTHON_VERSION"
+    else
+        print_error "Python is not installed."
+        exit 1
+    fi
+    
+    print_section "Step 2: Verifying Database Connection"
+    
+    # Test database connection using psql if available, otherwise continue
+    if command_exists psql; then
+        echo "Testing database connection..."
+        if PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -p "$DB_PORT" -c "SELECT 1;" >/dev/null 2>&1; then
+            print_success "Database connection successful"
+        else
+            print_error "Cannot connect to database. Check connection settings."
+            exit 1
+        fi
+    else
+        echo -e "${YELLOW}psql not available, skipping connection test${NC}"
+    fi
+    
+else
+    # Original Docker-based setup
+    # Check Docker
+    if command_exists docker; then
+        print_success "Docker is installed"
+    else
+        print_error "Docker is not installed. Please install Docker first."
+        exit 1
+    fi
 
-print_success "PostgreSQL is ready"
+    # Check Docker Compose
+    if command_exists docker-compose || docker compose version >/dev/null 2>&1; then
+        print_success "Docker Compose is available"
+    else
+        print_error "Docker Compose is not available. Please install it first."
+        exit 1
+    fi
+
+    # Check Python
+    if command_exists python3; then
+        PYTHON_VERSION=$(python3 --version)
+        print_success "Python is installed: $PYTHON_VERSION"
+    else
+        print_error "Python 3 is not installed. Please install Python 3.8+."
+        exit 1
+    fi
+
+    print_section "Step 2: Setting Up Virtual Environment"
+
+    if [ ! -d "venv" ]; then
+        python3 -m venv venv
+        print_success "Virtual environment created"
+    else
+        print_success "Virtual environment already exists"
+    fi
+
+    # Activate virtual environment
+    source venv/bin/activate
+    print_success "Virtual environment activated"
+
+    print_section "Step 3: Installing Python Dependencies"
+
+    pip install -r requirements.txt -q
+    print_success "Python dependencies installed"
+
+    print_section "Step 4: Starting Docker Containers"
+
+    # Stop any existing containers
+    docker-compose down 2>/dev/null || true
+
+    # Start containers
+    docker-compose up -d
+
+    # Wait for PostgreSQL to be ready
+    echo "Waiting for PostgreSQL to be ready..."
+    sleep 10
+
+    # Check if database is ready
+    MAX_RETRIES=30
+    RETRY_COUNT=0
+    while ! docker-compose exec -T postgres pg_isready -U zensus_user -d zensus_db >/dev/null 2>&1; do
+        RETRY_COUNT=$((RETRY_COUNT + 1))
+        if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+            print_error "PostgreSQL failed to start after ${MAX_RETRIES} attempts"
+            docker-compose logs postgres
+            exit 1
+        fi
+        echo "Waiting for PostgreSQL... (${RETRY_COUNT}/${MAX_RETRIES})"
+        sleep 2
+    done
+
+    print_success "PostgreSQL is ready"
+fi
 
 print_section "Step 5: Loading Grid Geometries"
 
@@ -229,7 +289,11 @@ for grid_size in "${GRID_SIZES[@]}"; do
     
     echo "Applying schema to database..."
     # Apply SQL to database
-    docker-compose exec -T postgres psql -U zensus_user -d zensus_db < "/tmp/schema_${grid_size}.sql"
+    if [ "$CONTAINERIZED" = true ]; then
+        PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -p "$DB_PORT" < "/tmp/schema_${grid_size}.sql"
+    else
+        docker-compose exec -T postgres psql -U zensus_user -d zensus_db < "/tmp/schema_${grid_size}.sql"
+    fi
     
     # Clean up temp file
     rm -f "/tmp/schema_${grid_size}.sql"
@@ -452,14 +516,25 @@ echo ""
 echo "Time elapsed: ${MINUTES}m ${SECONDS}s"
 echo ""
 echo "Connection details:"
-echo "  Host: localhost"
-echo "  Port: 5432"
-echo "  Database: zensus_db"
-echo "  User: zensus_user"
-echo "  Password: zensus123"
-echo ""
-echo "Connect with:"
-echo "  psql -h localhost -p 5432 -U zensus_user -d zensus_db"
+if [ "$CONTAINERIZED" = true ]; then
+    echo "  Host: $DB_HOST"
+    echo "  Port: $DB_PORT"
+    echo "  Database: $DB_NAME"
+    echo "  User: $DB_USER"
+    echo "  Password: $DB_PASSWORD"
+    echo ""
+    echo "Connect with:"
+    echo "  psql -h $DB_HOST -p $DB_PORT -U $DB_USER -d $DB_NAME"
+else
+    echo "  Host: localhost"
+    echo "  Port: 5432"
+    echo "  Database: zensus_db"
+    echo "  User: zensus_user"
+    echo "  Password: zensus123"
+    echo ""
+    echo "Connect with:"
+    echo "  psql -h localhost -p 5432 -U zensus_user -d zensus_db"
+fi
 echo ""
 echo "Or use pgAdmin, DBeaver, or QGIS to connect and query the data."
 echo ""
