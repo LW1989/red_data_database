@@ -138,14 +138,28 @@ def read_csv_data(csv_path, max_rows=100):
         - dtype_dict: Maps column names to pandas dtypes
     """
     try:
-        # Read CSV with pandas to handle encoding and delimiters correctly
-        df = pd.read_csv(
-            csv_path,
-            sep=';',
-            encoding='utf-8',
-            nrows=max_rows,
-            low_memory=False
-        )
+        # Try multiple encodings (some CSV files use latin-1 instead of UTF-8)
+        encodings = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
+        df = None
+        last_error = None
+        
+        for encoding in encodings:
+            try:
+                df = pd.read_csv(
+                    csv_path,
+                    sep=';',
+                    encoding=encoding,
+                    nrows=max_rows,
+                    low_memory=False
+                )
+                break  # Success! Exit the encoding loop
+            except (UnicodeDecodeError, UnicodeError) as e:
+                last_error = e
+                continue  # Try next encoding
+        
+        if df is None:
+            # None of the encodings worked
+            raise last_error if last_error else Exception("Failed to read CSV with any encoding")
         
         # Check if ANY column in the CSV has em-dash values
         # If so, pandas may convert all integer columns to float64 during preprocessing
