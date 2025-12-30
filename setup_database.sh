@@ -163,8 +163,48 @@ if [ "$CONTAINERIZED" = true ]; then
             exit 1
         fi
     else
-        echo -e "${YELLOW}psql not available, skipping connection test${NC}"
+        echo -e "${YELLOW}psql not available, installing PostgreSQL client...${NC}"
+        apt-get update -qq && apt-get install -y -qq postgresql-client >/dev/null 2>&1
+        print_success "PostgreSQL client installed"
+        
+        # Test connection again
+        echo "Testing database connection..."
+        if PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -p "$DB_PORT" -c "SELECT 1;" >/dev/null 2>&1; then
+            print_success "Database connection successful"
+        else
+            print_error "Cannot connect to database. Check connection settings."
+            exit 1
+        fi
     fi
+    
+    print_section "Step 3: Applying Database Schema"
+    
+    echo "Applying SQL schema files to database..."
+    
+    # Apply schema files in order
+    SCHEMA_FILES=(
+        "docker/init/01_extensions.sql"
+        "docker/init/02_schema.sql"
+        "docker/init/03_vg250_schema.sql"
+        "docker/init/04_bundestagswahlen_schema.sql"
+        "docker/init/05_lwu_properties_schema.sql"
+    )
+    
+    for schema_file in "${SCHEMA_FILES[@]}"; do
+        if [ -f "$schema_file" ]; then
+            echo "  Applying $(basename $schema_file)..."
+            if PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -p "$DB_PORT" -f "$schema_file" >/dev/null 2>&1; then
+                print_success "  $(basename $schema_file) applied"
+            else
+                print_error "  Failed to apply $(basename $schema_file)"
+                exit 1
+            fi
+        else
+            echo -e "${YELLOW}  Schema file not found: $schema_file (skipping)${NC}"
+        fi
+    done
+    
+    print_success "Database schema applied successfully"
     
 else
     # Original Docker-based setup
@@ -211,7 +251,7 @@ else
     pip install -r requirements.txt -q
     print_success "Python dependencies installed"
 
-    print_section "Step 4: Starting Docker Containers"
+    print_section "Step 3: Starting Docker Containers"
 
     # Stop any existing containers
     docker-compose down 2>/dev/null || true
@@ -240,7 +280,7 @@ else
     print_success "PostgreSQL is ready"
 fi
 
-print_section "Step 5: Loading Grid Geometries"
+print_section "Step 4: Loading Grid Geometries"
 
 # Check if grid data exists
 if [ ! -d "data/geo_data" ]; then
@@ -265,7 +305,7 @@ for grid_size in "${GRID_SIZES[@]}"; do
     fi
 done
 
-print_section "Step 6: Generating and Applying Database Schema"
+print_section "Step 5: Generating and Applying Zensus Data Schema"
 
 # Generate and apply schema for each grid size
 for grid_size in "${GRID_SIZES[@]}"; do
@@ -301,7 +341,7 @@ for grid_size in "${GRID_SIZES[@]}"; do
     print_success "Schema generated and applied for ${grid_size}"
 done
 
-print_section "Step 7: Loading Zensus Data"
+print_section "Step 6: Loading Zensus Data"
 
 # Load Zensus data for each grid size
 for grid_size in "${GRID_SIZES[@]}"; do
@@ -316,7 +356,7 @@ done
 
 # Optional: Load VG250 data
 if [ "$SKIP_VG250" = false ]; then
-    print_section "Step 8: Loading VG250 Administrative Boundaries (Optional)"
+    print_section "Step 7: Loading VG250 Administrative Boundaries (Optional)"
     
     # Try multiple possible VG250 directory names
     VG250_DIR=""
@@ -367,7 +407,7 @@ fi
 
 # Optional: Load Election data
 if [ "$SKIP_ELECTIONS" = false ]; then
-    print_section "Step 9: Loading Bundestagswahlen Election Data (Optional)"
+    print_section "Step 8: Loading Bundestagswahlen Election Data (Optional)"
     
     ELECTION_DIR="data/bundestagswahlen"
     if [ -d "$ELECTION_DIR" ]; then
@@ -420,7 +460,7 @@ else
 fi
 
 # Load LWU properties (always if data exists)
-print_section "Step 10: Loading LWU Berlin Properties (Optional)"
+print_section "Step 9: Loading LWU Berlin Properties (Optional)"
 
 LWU_FILE="data/luw_berlin/lwu_berlin_small.geojson"
 if [ -f "$LWU_FILE" ]; then
@@ -431,7 +471,7 @@ else
     echo "LWU data file not found ($LWU_FILE), skipping..."
 fi
 
-print_section "Step 11: Verifying Database"
+print_section "Step 10: Verifying Database"
 
 # Run verification queries
 echo "Running verification queries..."
