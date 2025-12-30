@@ -140,21 +140,33 @@ def load_zensus_csv(csv_path: Path, engine, validate_grid_ids: bool = True, chun
     # Read CSV (semicolon-delimited)
     # Parameters:
     # - sep=';': German CSV files use semicolon as delimiter
-    # - encoding='utf-8': Handles German characters and em-dash properly
+    # - encoding: Try UTF-8 first, fallback to latin-1/cp1252 for older files
     # - low_memory=False: Read entire file into memory for better type inference
     # - on_bad_lines='skip': Skip malformed lines instead of failing
-    try:
-        df = pd.read_csv(
-            csv_path, 
-            sep=';', 
-            encoding='utf-8', 
-            low_memory=False,
-            on_bad_lines='skip'  # Skip malformed lines gracefully
-        )
-        logger.info(f"Read {len(df)} rows from CSV with columns: {list(df.columns)}")
-    except Exception as e:
-        logger.error(f"Failed to read CSV file: {e}")
-        raise
+    df = None
+    for encoding in ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']:
+        try:
+            df = pd.read_csv(
+                csv_path, 
+                sep=';', 
+                encoding=encoding, 
+                low_memory=False,
+                on_bad_lines='skip'  # Skip malformed lines gracefully
+            )
+            logger.info(f"Read {len(df)} rows from CSV with columns: {list(df.columns)} (encoding: {encoding})")
+            break
+        except UnicodeDecodeError:
+            if encoding == 'iso-8859-1':
+                logger.error(f"Failed to read CSV file with all attempted encodings")
+                raise
+            logger.warning(f"Encoding {encoding} failed, trying next encoding...")
+            continue
+        except Exception as e:
+            logger.error(f"Failed to read CSV file: {e}")
+            raise
+    
+    if df is None:
+        raise ValueError("Could not read CSV file with any supported encoding")
     
     # Determine grid_id column name (handle both GITTER_ID and Gitter_ID typo)
     grid_id_col = None
