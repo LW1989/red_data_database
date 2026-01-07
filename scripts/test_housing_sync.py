@@ -54,11 +54,12 @@ def test_local_db_connection():
     print("=" * 80)
     
     try:
+        from sqlalchemy import text
         engine = get_local_db_engine()
         
         # Test connection
         with engine.connect() as conn:
-            result = conn.execute("SELECT version()")
+            result = conn.execute(text("SELECT version()"))
             version = result.scalar()
             print(f"✓ Connection successful")
             print(f"✓ PostgreSQL version: {version[:50]}...")
