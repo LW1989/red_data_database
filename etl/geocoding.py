@@ -224,6 +224,12 @@ class NominatimGeocoder:
         """
         parts = []
         
+        # Clean and filter out empty/None values
+        street = str(street).strip() if street and str(street).strip() not in ['', 'None', 'nan'] else None
+        house_number = str(house_number).strip() if house_number and str(house_number).strip() not in ['', 'None', 'nan'] else None
+        postal_code = str(postal_code).strip() if postal_code and str(postal_code).strip() not in ['', 'None', 'nan'] else None
+        city = str(city).strip() if city and str(city).strip() not in ['', 'None', 'nan'] else None
+        
         if street and house_number:
             parts.append(f"{street} {house_number}")
         elif street:
@@ -237,7 +243,7 @@ class NominatimGeocoder:
         
         address = ", ".join(parts)
         
-        # Add country for better results
+        # Add country for better results (if we have any address)
         if address:
             address += ", Germany"
         

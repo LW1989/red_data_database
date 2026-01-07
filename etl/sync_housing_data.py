@@ -172,21 +172,44 @@ def geocode_properties(df: pd.DataFrame, geocoder, max_records: Optional[int] = 
         postal_code = row.get('plz', '')
         city = row.get('ort', '')
         
-        # Skip if no address components
-        if not any([street, postal_code, city]):
-            logger.warning(f"Skipping row {idx}: No address components")
+        # Convert None/NaN to empty string
+        street = str(street) if pd.notna(street) else ''
+        house_number = str(house_number) if pd.notna(house_number) else ''
+        postal_code = str(postal_code) if pd.notna(postal_code) else ''
+        city = str(city) if pd.notna(city) else ''
+        
+        # Clean city name - remove district information (OT = Ortsteil)
+        # "Berlin OT Reinickendorf" -> "Berlin"
+        if city and ' OT ' in city:
+            city = city.split(' OT ')[0].strip()
+        
+        # Skip if we don't have at least postal code OR (street and city)
+        if not postal_code and not (street and city):
+            logger.warning(f"Skipping row {idx}: Insufficient address components "
+                          f"(street={bool(street)}, postal={bool(postal_code)}, city={bool(city)})")
             df.at[idx, 'geocoding_status'] = 'failed'
             df.at[idx, 'geocoded_address'] = 'NO_ADDRESS'
             fail_count += 1
             continue
         
-        # Geocode
+        # Try geocoding with full address
         result = geocoder.geocode_components(
             street=street,
             house_number=house_number,
             postal_code=postal_code,
             city=city
         )
+        
+        # If failed and we have postal code + street, try without city
+        # (German postal codes are very specific)
+        if not result['success'] and postal_code and street:
+            logger.debug(f"Retrying without city for row {idx}")
+            result = geocoder.geocode_components(
+                street=street,
+                house_number=house_number,
+                postal_code=postal_code,
+                city=None  # Try without city
+            )
         
         # Update DataFrame with results
         if result['success']:
