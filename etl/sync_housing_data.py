@@ -172,7 +172,6 @@ def geocode_properties(df: pd.DataFrame, geocoder, max_records: Optional[int] = 
     df['latitude'] = None
     df['longitude'] = None
     df['geocoding_status'] = 'pending'
-    df['geocoding_quality'] = None
     df['geocoded_address'] = None
     df['last_geocoded_at'] = None
     
@@ -236,7 +235,6 @@ def geocode_properties(df: pd.DataFrame, geocoder, max_records: Optional[int] = 
             df.at[idx, 'latitude'] = result['latitude']
             df.at[idx, 'longitude'] = result['longitude']
             df.at[idx, 'geocoding_status'] = 'success'
-            df.at[idx, 'geocoding_quality'] = result.get('quality', 0.5)
             df.at[idx, 'geocoded_address'] = result.get('display_name', '')
             df.at[idx, 'last_geocoded_at'] = datetime.now()
             success_count += 1

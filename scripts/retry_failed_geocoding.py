@@ -78,7 +78,6 @@ def retry_geocoding(df, geocoder):
     df['latitude'] = None
     df['longitude'] = None
     df['geocoding_status'] = 'pending'
-    df['geocoding_quality'] = None
     df['geocoded_address'] = None
     df['last_geocoded_at'] = None
     
@@ -134,7 +133,6 @@ def retry_geocoding(df, geocoder):
             df.at[idx, 'latitude'] = result['latitude']
             df.at[idx, 'longitude'] = result['longitude']
             df.at[idx, 'geocoding_status'] = 'success'
-            df.at[idx, 'geocoding_quality'] = result.get('quality', 0.5)
             df.at[idx, 'geocoded_address'] = result.get('display_name', '')
             df.at[idx, 'last_geocoded_at'] = datetime.now()
             success_count += 1
@@ -176,7 +174,6 @@ def update_geocoding_results(df, local_engine):
                 # Convert NaN to None
                 lat = None if pd.isna(row['latitude']) else float(row['latitude'])
                 lon = None if pd.isna(row['longitude']) else float(row['longitude'])
-                quality = None if pd.isna(row['geocoding_quality']) else float(row['geocoding_quality'])
                 
                 # Update query
                 conn.execute(text("""
@@ -185,7 +182,6 @@ def update_geocoding_results(df, local_engine):
                         latitude = :lat,
                         longitude = :lon,
                         geocoding_status = :status,
-                        geocoding_quality = :quality,
                         geocoded_address = :address,
                         last_geocoded_at = :geocoded_at,
                         geom = CASE 
@@ -199,7 +195,6 @@ def update_geocoding_results(df, local_engine):
                     'lat': lat,
                     'lon': lon,
                     'status': row['geocoding_status'],
-                    'quality': quality,
                     'address': row['geocoded_address'],
                     'geocoded_at': row['last_geocoded_at']
                 })

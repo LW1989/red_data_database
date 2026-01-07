@@ -28,7 +28,6 @@ CREATE TABLE IF NOT EXISTS housing.properties (
     longitude DOUBLE PRECISION,
     geom GEOMETRY(POINT, 4326),
     geocoding_status TEXT,
-    geocoding_quality NUMERIC,
     geocoded_address TEXT,
     -- Metadata columns,
     synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
