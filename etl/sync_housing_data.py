@@ -97,6 +97,7 @@ def fetch_properties_from_external_db(external_conn, last_sync: Optional[datetim
                                      limit: Optional[int] = None):
     """
     Fetch properties from external database.
+    Excludes parking spaces (Stellplätze) and garages.
     
     Args:
         external_conn: Connection to external database
@@ -106,20 +107,39 @@ def fetch_properties_from_external_db(external_conn, last_sync: Optional[datetim
     Returns:
         DataFrame with property data
     """
+    # Filter out parking spaces and garages
+    # Keep only actual apartments/houses (wohnung, haus, etc.)
+    type_filter = """
+        AND (immo_type_scraped IS NULL 
+             OR LOWER(immo_type_scraped) NOT LIKE '%stellplatz%'
+             OR LOWER(immo_type_scraped) NOT LIKE '%stellplaetz%'
+             AND LOWER(immo_type_scraped) NOT LIKE '%garage%'
+             AND LOWER(immo_type_scraped) NOT LIKE '%tiefgarage%'
+             AND LOWER(immo_type_scraped) NOT LIKE '%parkplatz%'
+             AND LOWER(immo_type_scraped) != 'garage'
+             AND LOWER(immo_type_scraped) != 'stellplatz')
+    """
+    
     if last_sync:
         # Incremental sync: fetch only new/updated records
-        query = """
+        query = f"""
             SELECT * FROM all_properties 
             WHERE date_scraped > %s
+            {type_filter}
             ORDER BY date_scraped
         """
         params = (last_sync,)
-        logger.info(f"Fetching properties updated since {last_sync}")
+        logger.info(f"Fetching properties updated since {last_sync} (excluding parking/garages)")
     else:
         # Full sync: fetch all records
-        query = "SELECT * FROM all_properties ORDER BY date_scraped"
+        query = f"""
+            SELECT * FROM all_properties 
+            WHERE 1=1
+            {type_filter}
+            ORDER BY date_scraped
+        """
         params = None
-        logger.info("Fetching all properties (full sync)")
+        logger.info("Fetching all properties (full sync, excluding parking/garages)")
     
     if limit:
         query += f" LIMIT {limit}"
