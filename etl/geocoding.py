@@ -208,8 +208,72 @@ class NominatimGeocoder:
         
         logger.info(f"Nominatim geocoder initialized (cache: {cache_enabled}, rate: {rate_limit} req/s)")
     
+    def _normalize_german_chars(self, text: str) -> str:
+        """
+        Normalize German special characters for better geocoding results.
+        Some geocoding services work better with normalized characters.
+        
+        Args:
+            text: Text to normalize
+            
+        Returns:
+            Normalized text
+        """
+        if not text:
+            return text
+        
+        # German character mapping
+        replacements = {
+            'ä': 'ae', 'Ä': 'Ae',
+            'ö': 'oe', 'Ö': 'Oe',
+            'ü': 'ue', 'Ü': 'Ue',
+            'ß': 'ss'
+        }
+        
+        for german, replacement in replacements.items():
+            text = text.replace(german, replacement)
+        
+        return text
+    
+    def _expand_abbreviations(self, street: str) -> str:
+        """
+        Expand common German street abbreviations.
+        
+        Args:
+            street: Street name with potential abbreviations
+            
+        Returns:
+            Street name with expanded abbreviations
+        """
+        if not street:
+            return street
+        
+        # Common German street abbreviations
+        # Note: Order matters - do longer patterns first
+        abbreviations = {
+            'Str.': 'Strasse',
+            'str.': 'strasse',
+            'Pl.': 'Platz',
+            'pl.': 'platz',
+            'Weg.': 'Weg',
+            'Allee.': 'Allee',
+            'Gasse.': 'Gasse',
+            'Freih.-vom-': 'Freiherr-vom-',
+            'Freih.': 'Freiherr',
+            'Dr.-': 'Doktor-',
+            'Prof.-': 'Professor-',
+            'St.-': 'Sankt-',
+        }
+        
+        result = street
+        for abbr, full in abbreviations.items():
+            result = result.replace(abbr, full)
+        
+        return result
+    
     def normalize_address(self, street: str = None, house_number: str = None, 
-                         postal_code: str = None, city: str = None) -> str:
+                         postal_code: str = None, city: str = None, 
+                         normalize_chars: bool = False) -> str:
         """
         Normalize address components into a single string.
         
@@ -218,6 +282,7 @@ class NominatimGeocoder:
             house_number: House number
             postal_code: Postal code (PLZ)
             city: City name
+            normalize_chars: Whether to normalize German special characters
             
         Returns:
             Normalized address string
@@ -229,6 +294,17 @@ class NominatimGeocoder:
         house_number = str(house_number).strip() if house_number and str(house_number).strip() not in ['', 'None', 'nan'] else None
         postal_code = str(postal_code).strip() if postal_code and str(postal_code).strip() not in ['', 'None', 'nan'] else None
         city = str(city).strip() if city and str(city).strip() not in ['', 'None', 'nan'] else None
+        
+        # Normalize German characters if requested
+        if normalize_chars:
+            if street:
+                street = self._normalize_german_chars(street)
+            if city:
+                city = self._normalize_german_chars(city)
+        
+        # Always expand common abbreviations
+        if street:
+            street = self._expand_abbreviations(street)
         
         if street and house_number:
             parts.append(f"{street} {house_number}")
@@ -282,7 +358,7 @@ class NominatimGeocoder:
                     'countrycodes': 'de'
                 }
                 
-                logger.debug(f"Geocoding attempt {attempt + 1}/{max_retries}: {address[:50]}")
+                logger.debug(f"Geocoding attempt {attempt + 1}/{max_retries}: '{address[:80]}'")
                 
                 response = requests.get(
                     self.base_url,
@@ -392,7 +468,7 @@ class NominatimGeocoder:
     def geocode_components(self, street: str = None, house_number: str = None,
                           postal_code: str = None, city: str = None) -> Dict:
         """
-        Geocode from address components.
+        Geocode from address components with multiple fallback strategies.
         
         Args:
             street: Street name
@@ -403,8 +479,23 @@ class NominatimGeocoder:
         Returns:
             Dict with geocoding results
         """
-        address = self.normalize_address(street, house_number, postal_code, city)
-        return self.geocode(address)
+        # Try 1: Original address with special characters
+        address = self.normalize_address(street, house_number, postal_code, city, normalize_chars=False)
+        result = self.geocode(address)
+        
+        if result['success']:
+            return result
+        
+        # Try 2: Normalized German characters (ß -> ss, ä -> ae, etc.)
+        logger.debug("Trying with normalized German characters")
+        address_normalized = self.normalize_address(street, house_number, postal_code, city, normalize_chars=True)
+        if address_normalized != address:  # Only try if it's different
+            result = self.geocode(address_normalized)
+            if result['success']:
+                return result
+        
+        # Return the last (failed) result
+        return result
 
 
 # Convenience function for easy import
