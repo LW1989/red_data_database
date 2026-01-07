@@ -31,30 +31,31 @@ def fetch_failed_properties(local_engine):
     """
     logger.info("Fetching failed/missing geocoding records (excluding parking/garages)...")
     
-    with local_engine.connect() as conn:
-        df = pd.read_sql_query("""
-            SELECT 
-                internal_id,
-                strasse_normalized,
-                hausnummer,
-                plz,
-                ort,
-                geocoding_status,
-                immo_type_scraped
-            FROM housing.properties
-            WHERE (geocoding_status IN ('failed', 'pending')
-                   OR geocoding_status IS NULL
-                   OR (latitude IS NULL AND longitude IS NULL))
-              AND (immo_type_scraped IS NULL 
-                   OR LOWER(immo_type_scraped) NOT LIKE '%stellplatz%'
-                   AND LOWER(immo_type_scraped) NOT LIKE '%stellplaetz%'
-                   AND LOWER(immo_type_scraped) NOT LIKE '%garage%'
-                   AND LOWER(immo_type_scraped) NOT LIKE '%tiefgarage%'
-                   AND LOWER(immo_type_scraped) NOT LIKE '%parkplatz%'
-                   AND LOWER(immo_type_scraped) != 'garage'
-                   AND LOWER(immo_type_scraped) != 'stellplatz')
-            ORDER BY internal_id
-        """, conn)
+    query = text("""
+        SELECT 
+            internal_id,
+            strasse_normalized,
+            hausnummer,
+            plz,
+            ort,
+            geocoding_status,
+            immo_type_scraped
+        FROM housing.properties
+        WHERE (geocoding_status IN ('failed', 'pending')
+               OR geocoding_status IS NULL
+               OR (latitude IS NULL AND longitude IS NULL))
+          AND (immo_type_scraped IS NULL 
+               OR LOWER(immo_type_scraped) NOT LIKE '%stellplatz%'
+               AND LOWER(immo_type_scraped) NOT LIKE '%stellplaetz%'
+               AND LOWER(immo_type_scraped) NOT LIKE '%garage%'
+               AND LOWER(immo_type_scraped) NOT LIKE '%tiefgarage%'
+               AND LOWER(immo_type_scraped) NOT LIKE '%parkplatz%'
+               AND LOWER(immo_type_scraped) != 'garage'
+               AND LOWER(immo_type_scraped) != 'stellplatz')
+        ORDER BY internal_id
+    """)
+    
+    df = pd.read_sql_query(query, local_engine)
     
     logger.info(f"Found {len(df)} properties needing geocoding (apartments/houses only)")
     return df
