@@ -109,15 +109,16 @@ def fetch_properties_from_external_db(external_conn, last_sync: Optional[datetim
     """
     # Filter out parking spaces and garages
     # Keep only actual apartments/houses (wohnung, haus, etc.)
+    # Logic: Include if type is NULL OR (type doesn't contain ANY parking/garage keywords)
     type_filter = """
         AND (immo_type_scraped IS NULL 
-             OR LOWER(immo_type_scraped) NOT LIKE '%stellplatz%'
-             OR LOWER(immo_type_scraped) NOT LIKE '%stellplaetz%'
-             AND LOWER(immo_type_scraped) NOT LIKE '%garage%'
-             AND LOWER(immo_type_scraped) NOT LIKE '%tiefgarage%'
-             AND LOWER(immo_type_scraped) NOT LIKE '%parkplatz%'
-             AND LOWER(immo_type_scraped) != 'garage'
-             AND LOWER(immo_type_scraped) != 'stellplatz')
+             OR (LOWER(immo_type_scraped) NOT LIKE '%stellplatz%'
+                 AND LOWER(immo_type_scraped) NOT LIKE '%stellplaetz%'
+                 AND LOWER(immo_type_scraped) NOT LIKE '%garage%'
+                 AND LOWER(immo_type_scraped) NOT LIKE '%tiefgarage%'
+                 AND LOWER(immo_type_scraped) NOT LIKE '%parkplatz%'
+                 AND LOWER(immo_type_scraped) != 'garage'
+                 AND LOWER(immo_type_scraped) != 'stellplatz'))
     """
     
     if last_sync:
