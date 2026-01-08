@@ -123,13 +123,13 @@ def fetch_properties_from_external_db(external_conn, last_sync: Optional[datetim
     
     if last_sync:
         # Incremental sync: fetch only new/updated records
+        # Format timestamp directly into query (safe - from our own DB)
         query = f"""
             SELECT * FROM all_properties 
-            WHERE date_scraped > %s
+            WHERE date_scraped > '{last_sync}'
             {type_filter}
             ORDER BY date_scraped
         """
-        params = [last_sync]  # Use list instead of tuple for pandas compatibility
         logger.info(f"Fetching properties updated since {last_sync} (excluding parking/garages)")
     else:
         # Full sync: fetch all records
@@ -139,17 +139,13 @@ def fetch_properties_from_external_db(external_conn, last_sync: Optional[datetim
             {type_filter}
             ORDER BY date_scraped
         """
-        params = None
         logger.info("Fetching all properties (full sync, excluding parking/garages)")
     
     if limit:
         query += f" LIMIT {limit}"
         logger.info(f"Limiting to {limit} records for testing")
     
-    if params:
-        df = pd.read_sql_query(query, external_conn, params=params)
-    else:
-        df = pd.read_sql_query(query, external_conn)
+    df = pd.read_sql_query(query, external_conn)
     
     logger.info(f"✓ Fetched {len(df)} properties from external database")
     return df
