@@ -317,11 +317,230 @@ gdf.plot(column='weighted_avg_rent_per_sqm', legend=True)
 
 ---
 
+## Schema: `housing`
+
+The housing schema contains real estate rental listing data from external sources with geocoded locations. This provides market-level rental data complementing the census aggregated statistics.
+
+### 🏠 Fact Tables
+
+#### `housing.properties`
+
+- **Status:** ✅ (~15,000 rows, updated daily)
+- **Description:** **Real estate rental listings with geocoded locations**
+- **Usage:** Market analysis, rental price tracking, property availability monitoring
+- **Source:** External housing scraper database (daily sync)
+- **Coverage:** Germany-wide rental properties (apartments and houses only, parking spaces excluded)
+
+**Columns:**
+
+**Property Identifiers:**
+- `internal_id` (TEXT, PRIMARY KEY) - Unique property identifier from source
+- `company` (TEXT) - Property management company/listing source
+
+**Address Components:**
+- `strasse_normalized` (TEXT) - Normalized street name
+- `hausnummer` (TEXT) - House number
+- `plz` (TEXT) - Postal code
+- `ort` (TEXT) - City/municipality name
+
+**Property Characteristics:**
+- `preis` (NUMERIC) - Monthly rent in EUR
+- `groesse` (NUMERIC) - Size in m²
+- `anzahl_zimmer` (NUMERIC) - Number of rooms
+- `eur_per_m2` (NUMERIC) - Rent per m² (EUR/m²)
+- `immo_type_scraped` (TEXT) - Property type (wohnung, haus, etc.)
+
+**Geocoding Data:**
+- `latitude` (DOUBLE PRECISION) - Latitude (WGS84)
+- `longitude` (DOUBLE PRECISION) - Longitude (WGS84)
+- `geom` (GEOMETRY, POINT, EPSG:4326) - PostGIS point geometry for spatial queries
+- `geocoding_status` (TEXT) - Status: 'success', 'failed', or 'pending'
+- `geocoded_address` (TEXT) - Full address string used for geocoding
+- `last_geocoded_at` (TIMESTAMP) - Last geocoding attempt timestamp
+
+**Temporal Tracking:**
+- `date_scraped` (TIMESTAMP) - When data was scraped from source
+- `first_seen` (TIMESTAMP) - First time property appeared in source
+- `last_seen` (TIMESTAMP) - Last time property was active in source
+- `created_at` (TIMESTAMP) - Record creation in source database
+- `updated_at` (TIMESTAMP) - Last update in source database
+- `synced_at` (TIMESTAMP) - Last sync to local database
+
+**Indexes:**
+- PRIMARY KEY on `internal_id`
+- GIST index on `geom` (spatial queries)
+- B-tree index on `geocoding_status` (filter queries)
+
+**Data Quality:**
+- **Geocoding Success Rate:** 99.4% (14,910/15,000)
+- **Failed Geocoding:** 90 properties (0.6%)
+  - 32 have insufficient address data
+  - 58 addresses not in OpenStreetMap database
+- **Excluded:** Parking spaces (Stellplätze) and garages are automatically filtered out
+
+**⚠️ Data Notes:**
+- Properties are synced daily at 5:00 AM (incremental sync)
+- Only apartments and houses are included (parking/garages excluded)
+- Geocoding uses Nominatim API with German address optimization
+- Failed geocoding may indicate data quality issues or very new streets
+
+---
+
+#### `housing.geocoding_cache`
+
+- **Status:** ✅ (Auto-managed)
+- **Description:** Cache for geocoding API results to reduce API calls
+- **Usage:** Automatic - used by sync script to avoid redundant geocoding
+
+**Columns:**
+- `id` (SERIAL, PRIMARY KEY) - Auto-incrementing ID
+- `address_hash` (TEXT, UNIQUE) - MD5 hash of normalized address
+- `original_address` (TEXT) - Full address string
+- `latitude` (DOUBLE PRECISION) - Cached latitude
+- `longitude` (DOUBLE PRECISION) - Cached longitude
+- `quality` (NUMERIC) - Quality score
+- `display_name` (TEXT) - Full display name from geocoder
+- `created_at` (TIMESTAMP) - Cache entry creation time
+- `used_count` (INTEGER) - Number of times cache was hit
+
+**Performance:**
+- Reduces API calls by ~90% after initial sync
+- Speeds up daily incremental syncs significantly
+- Automatically populated during geocoding
+
+---
+
+### 📊 Usage Examples
+
+#### Query Properties with Spatial Filters
+
+```sql
+-- Find properties within 1km of a specific location
+SELECT 
+    internal_id,
+    strasse_normalized || ' ' || hausnummer AS address,
+    plz || ' ' || ort AS city,
+    preis,
+    eur_per_m2,
+    groesse,
+    anzahl_zimmer
+FROM housing.properties
+WHERE geocoding_status = 'success'
+  AND ST_DWithin(
+      geom::geography,
+      ST_SetSRID(ST_MakePoint(13.4050, 52.5200), 4326)::geography,  -- Berlin center
+      1000  -- 1000 meters
+  )
+ORDER BY eur_per_m2;
+```
+
+#### Average Rent Analysis by City
+
+```sql
+-- Calculate average rent statistics by city
+SELECT 
+    ort AS city,
+    COUNT(*) AS property_count,
+    ROUND(AVG(preis)::numeric, 2) AS avg_rent_total,
+    ROUND(AVG(eur_per_m2)::numeric, 2) AS avg_rent_per_sqm,
+    ROUND(AVG(groesse)::numeric, 2) AS avg_size_sqm,
+    ROUND(AVG(anzahl_zimmer)::numeric, 2) AS avg_rooms
+FROM housing.properties
+WHERE geocoding_status = 'success'
+  AND preis IS NOT NULL
+  AND groesse IS NOT NULL
+GROUP BY ort
+HAVING COUNT(*) >= 10  -- Only cities with 10+ properties
+ORDER BY property_count DESC;
+```
+
+#### Load into GeoPandas
+
+```python
+import geopandas as gpd
+from sqlalchemy import create_engine
+
+engine = create_engine('postgresql://user:pass@host:port/red-data-db')
+
+# Load all geocoded properties
+properties = gpd.read_postgis(
+    """
+    SELECT 
+        internal_id,
+        strasse_normalized || ' ' || hausnummer AS address,
+        ort AS city,
+        plz,
+        preis,
+        eur_per_m2,
+        groesse,
+        anzahl_zimmer,
+        geom
+    FROM housing.properties
+    WHERE geocoding_status = 'success'
+    """,
+    engine,
+    geom_col='geom'
+)
+
+# Plot rent per m²
+properties.plot(column='eur_per_m2', legend=True, cmap='YlOrRd')
+```
+
+#### Geocoding Success Rate
+
+```sql
+-- Check geocoding quality
+SELECT 
+    geocoding_status,
+    COUNT(*) AS count,
+    ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER (), 2) AS percentage
+FROM housing.properties
+GROUP BY geocoding_status
+ORDER BY count DESC;
+```
+
+---
+
+## Maintenance & Updates
+
+### Housing Data Sync
+
+- **Automation:** Daily at 5:00 AM (cron job)
+- **Mode:** Incremental (only new/updated records)
+- **Script:** `etl/sync_housing_data.py`
+- **Logs:** `/app/red_data_database/logs/housing_sync.log`
+
+**Manual Operations:**
+```bash
+# Daily incremental sync
+python etl/sync_housing_data.py
+
+# Full re-sync (all records)
+python etl/sync_housing_data.py --full
+
+# Retry failed geocoding
+python scripts/retry_failed_geocoding.py
+
+# Run tests
+python scripts/test_housing_sync.py
+
+# Quality checks
+psql -f tests/sql/housing_quality_checks.sql
+```
+
+**Documentation:**
+- **User Guide:** `HOUSING_DATA_SYNC_GUIDE.md` - Setup and usage
+- **Implementation:** `IMPLEMENTATION_SUMMARY_HOUSING_SYNC.md` - Technical details
+- **Schema:** `docker/init/07_housing_data_schema.sql` - Database schema
+
+---
+
 ## Files & Resources
 
 - **Connection:** `notebooks/database_connection.ipynb` - Database connection examples
 - **Calculation:** `analysis/lwu_statistics/calculate_lwu_weighted_stats.py` - Calculate LWU statistics
 - **Guide:** `analysis/lwu_statistics/LWU_STATISTICS_GUIDE.md` - Detailed documentation
+- **Housing Sync:** `HOUSING_DATA_SYNC_GUIDE.md` - Housing data synchronization guide
 
 ---
 
