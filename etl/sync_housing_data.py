@@ -129,7 +129,7 @@ def fetch_properties_from_external_db(external_conn, last_sync: Optional[datetim
             {type_filter}
             ORDER BY date_scraped
         """
-        params = (last_sync,)
+        params = [last_sync]  # Use list instead of tuple for pandas compatibility
         logger.info(f"Fetching properties updated since {last_sync} (excluding parking/garages)")
     else:
         # Full sync: fetch all records
